@@ -38,6 +38,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _setUnavailable(error.message);
     } catch (_) {
       _setUnavailable('Location unavailable. Tap Saved Location to retry.');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
