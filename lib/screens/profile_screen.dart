@@ -1,11 +1,56 @@
 import 'package:flutter/material.dart';
 
+import '../services/device_location_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
 import 'safety_tips_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final _locationService = DeviceLocationService();
+  String _location = 'Getting device location...';
+  String? _coordinates;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshLocation();
+  }
+
+  Future<void> _refreshLocation() async {
+    setState(() => _isLoading = true);
+    try {
+      final location = await _locationService.getCurrentLocation();
+      if (!mounted) return;
+      setState(() {
+        _location = location.label;
+        _coordinates =
+            '${location.latitude.toStringAsFixed(5)}° N, ${location.longitude.toStringAsFixed(5)}° E';
+      });
+    } on LocationAccessException catch (error) {
+      _setUnavailable(error.message);
+    } catch (_) {
+      _setUnavailable('Location unavailable. Tap Saved Location to retry.');
+    }
+  }
+
+  void _setUnavailable(String message) {
+    if (!mounted) return;
+    setState(() {
+      _location = message;
+      _coordinates = null;
+    });
+  }
+
+  void _message(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -14,44 +59,63 @@ class ProfileScreen extends StatelessWidget {
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Card(
+        Card(
           child: Padding(
-            padding: EdgeInsets.all(20),
+            padding: const EdgeInsets.all(20),
             child: Row(
               children: [
-                CircleAvatar(
+                const CircleAvatar(
                   radius: 30,
                   backgroundColor: AppTheme.paleBlue,
                   child: Icon(Icons.person, size: 34, color: AppTheme.blue),
                 ),
-                SizedBox(width: 16),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Community Member',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 18,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Community Member',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
+                        ),
                       ),
-                    ),
-                    Text('Cagayan de Oro City, PH'),
-                  ],
+                      Text(
+                        _location,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
         ),
         const SizedBox(height: 16),
-        _option(
-          context,
-          Icons.location_on_outlined,
-          'Saved Location',
-          'Cagayan de Oro City, PH',
-          'Location settings will be connected to device location.',
+        Card(
+          child: ListTile(
+            leading: const Icon(
+              Icons.location_on_outlined,
+              color: AppTheme.blue,
+            ),
+            title: const Text('Saved Location'),
+            subtitle: Text(
+              _coordinates == null ? _location : '$_location\n$_coordinates',
+            ),
+            isThreeLine: _coordinates != null,
+            trailing: _isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.my_location, color: AppTheme.blue),
+            onTap: _isLoading ? null : _refreshLocation,
+          ),
         ),
         _option(
-          context,
           Icons.history,
           'Report History',
           'View your submitted hazard reports',
@@ -72,7 +136,6 @@ class ProfileScreen extends StatelessWidget {
           ),
         ),
         _option(
-          context,
           Icons.settings_outlined,
           'Notification Settings',
           '',
@@ -80,7 +143,7 @@ class ProfileScreen extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         OutlinedButton.icon(
-          onPressed: () => _message(context, 'Profile preferences saved.'),
+          onPressed: () => _message('Profile preferences saved.'),
           icon: const Icon(Icons.save_outlined),
           label: const Text('Save Preferences'),
         ),
@@ -88,8 +151,7 @@ class ProfileScreen extends StatelessWidget {
     ),
   );
 
-  static Widget _option(
-    BuildContext context,
+  Widget _option(
     IconData icon,
     String title,
     String subtitle,
@@ -100,9 +162,7 @@ class ProfileScreen extends StatelessWidget {
       title: Text(title),
       subtitle: subtitle.isEmpty ? null : Text(subtitle),
       trailing: const Icon(Icons.chevron_right),
-      onTap: () => _message(context, message),
+      onTap: () => _message(message),
     ),
   );
-  static void _message(BuildContext context, String text) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }
