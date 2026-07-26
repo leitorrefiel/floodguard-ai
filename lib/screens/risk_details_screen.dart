@@ -17,7 +17,7 @@ class RiskDetailsScreen extends StatelessWidget {
             leading: Icon(Icons.location_on, color: AppTheme.blue),
             title: Text('Current Location', style: TextStyle(fontSize: 12)),
             subtitle: Text(
-              'Cagayan de Oro City, PH',
+              'Baliwag, Bulacan, PH',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
           ),

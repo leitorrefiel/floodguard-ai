@@ -53,7 +53,7 @@ class AlertsScreen extends StatelessWidget {
               child: Icon(Icons.people_outline, color: AppTheme.blue),
             ),
             title: Text('Community Report Verified'),
-            subtitle: Text('A flooded road report in Lapasan was verified.'),
+            subtitle: Text('A flooded road report in Baliwag was verified.'),
           ),
         ),
         const SizedBox(height: 20),

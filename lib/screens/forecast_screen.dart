@@ -25,7 +25,7 @@ class ForecastScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Cagayan de Oro City',
+                      'Baliwag, Bulacan',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                     Text('26°C • Light Rain'),

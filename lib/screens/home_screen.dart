@@ -229,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Icon(Icons.directions_car_filled_outlined),
                 ),
                 title: Text('Flooded Road'),
-                subtitle: Text('Lapasan, Cagayan de Oro City • Today, 8:45 AM'),
+                subtitle: Text('Baliwag, Bulacan • Today, 8:45 AM'),
                 trailing: Chip(label: Text('Verified')),
                 onTap: () => Navigator.push(
                   context,
@@ -243,9 +243,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListTile(
                 leading: CircleAvatar(child: Icon(Icons.water_damage_outlined)),
                 title: Text('Blocked Drainage'),
-                subtitle: Text(
-                  'Kauswagan, Cagayan de Oro City • Today, 7:30 AM',
-                ),
+                subtitle: Text('Baliwag, Bulacan • Today, 7:30 AM'),
                 trailing: Chip(label: Text('Verified')),
                 onTap: () => Navigator.push(
                   context,

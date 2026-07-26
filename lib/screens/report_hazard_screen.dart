@@ -75,8 +75,8 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
         Card(
           child: ListTile(
             leading: const Icon(Icons.location_on, color: AppTheme.blue),
-            title: const Text('Cagayan de Oro City, PH'),
-            subtitle: const Text('8.4821° N, 124.6478° E'),
+            title: const Text('Baliwag, Bulacan, PH'),
+            subtitle: const Text('14.95860° N, 120.88670° E'),
             trailing: TextButton(
               onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -141,7 +141,7 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
     final report = HazardReport(
       type: _type,
       severity: _severity,
-      location: 'Cagayan de Oro City, PH',
+      location: 'Baliwag, Bulacan, PH',
       description: _description.text,
     );
     ScaffoldMessenger.of(context).showSnackBar(
