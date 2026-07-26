@@ -14,6 +14,7 @@ class FloodGuardApp extends StatelessWidget {
       title: 'FloodGuard AI',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
+      scrollBehavior: const AppScrollBehavior(),
       home: const HomeScreen(),
     );
   }
