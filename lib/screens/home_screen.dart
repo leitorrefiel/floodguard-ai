@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../services/device_location_service.dart';
 import '../services/risk_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
@@ -10,8 +13,18 @@ import 'report_hazard_screen.dart';
 import 'risk_details_screen.dart';
 import 'safety_tips_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final _locationService = DeviceLocationService();
+  String _locationLabel = 'Tap to use your current location';
+  String? _coordinates;
+  bool _isLoadingLocation = false;
 
   @override
   Widget build(BuildContext context) {
@@ -248,20 +261,63 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _refreshLocation() async {
+    setState(() => _isLoadingLocation = true);
+    try {
+      final location = await _locationService.getCurrentLocation();
+      if (!mounted) return;
+      setState(() {
+        _locationLabel = location.label;
+        _coordinates =
+            '${location.latitude.toStringAsFixed(5)}° N, ${location.longitude.toStringAsFixed(5)}° E';
+      });
+    } on LocationAccessException catch (error) {
+      if (mounted) {
+        _showMessage(error.message);
+      }
+    } on TimeoutException {
+      if (mounted) {
+        _showMessage(
+          'Location request timed out. Please try again outdoors or with GPS enabled.',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        _showMessage(
+          'Unable to read your location right now. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingLocation = false);
+    }
+  }
+
+  void _showMessage(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
   Widget _locationCard(BuildContext context) => Card(
     child: ListTile(
       leading: const Icon(Icons.location_on, color: AppTheme.blue),
       title: const Text('Current Location', style: TextStyle(fontSize: 12)),
-      subtitle: const Text(
-        'Cagayan de Oro City, PH',
-        style: TextStyle(fontWeight: FontWeight.w700),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _locationLabel,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          if (_coordinates != null)
+            Text(_coordinates!, style: const TextStyle(fontSize: 11)),
+        ],
       ),
-      trailing: const Icon(Icons.my_location, color: AppTheme.blue),
-      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Current location selected: Cagayan de Oro City, PH.'),
-        ),
-      ),
+      trailing: _isLoadingLocation
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.my_location, color: AppTheme.blue),
+      onTap: _isLoadingLocation ? null : _refreshLocation,
     ),
   );
 
