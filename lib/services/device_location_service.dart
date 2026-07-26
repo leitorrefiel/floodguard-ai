@@ -44,8 +44,12 @@ class DeviceLocationService {
     }
 
     final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-    ).timeout(const Duration(seconds: 20));
+      locationSettings: AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        forceLocationManager: true,
+        timeLimit: Duration(seconds: 20),
+      ),
+    );
 
     var label =
         '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
