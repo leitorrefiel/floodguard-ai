@@ -43,13 +43,18 @@ class DeviceLocationService {
       );
     }
 
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        forceLocationManager: true,
-        timeLimit: Duration(seconds: 20),
-      ),
+    final cachedPosition = await Geolocator.getLastKnownPosition(
+      forceAndroidLocationManager: true,
     );
+    final position =
+        cachedPosition ??
+        await Geolocator.getCurrentPosition(
+          locationSettings: AndroidSettings(
+            accuracy: LocationAccuracy.high,
+            forceLocationManager: true,
+            timeLimit: const Duration(seconds: 20),
+          ),
+        );
 
     var label =
         '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
