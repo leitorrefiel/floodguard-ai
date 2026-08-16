@@ -1,5 +1,6 @@
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DeviceLocation {
   const DeviceLocation({
@@ -21,7 +22,31 @@ class LocationAccessException implements Exception {
 class DeviceLocationService {
   DeviceLocationService({Geocoding? geocoding}) : _geocoding = geocoding;
 
+  static const _labelKey = 'saved_location_label';
+  static const _latitudeKey = 'saved_location_latitude';
+  static const _longitudeKey = 'saved_location_longitude';
+
   Geocoding? _geocoding;
+
+  Future<DeviceLocation?> getSavedLocation() async {
+    final preferences = await SharedPreferences.getInstance();
+    final label = preferences.getString(_labelKey);
+    final latitude = preferences.getDouble(_latitudeKey);
+    final longitude = preferences.getDouble(_longitudeKey);
+    if (label == null || latitude == null || longitude == null) return null;
+    return DeviceLocation(
+      label: label,
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
+
+  Future<void> _saveLocation(DeviceLocation location) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_labelKey, location.label);
+    await preferences.setDouble(_latitudeKey, location.latitude);
+    await preferences.setDouble(_longitudeKey, location.longitude);
+  }
 
   Future<DeviceLocation> getCurrentLocation() async {
     if (!await Geolocator.isLocationServiceEnabled()) {
@@ -76,10 +101,12 @@ class DeviceLocationService {
       // The coordinates remain useful when Android's geocoding service is unavailable.
     }
 
-    return DeviceLocation(
+    final location = DeviceLocation(
       label: label,
       latitude: position.latitude,
       longitude: position.longitude,
     );
+    await _saveLocation(location);
+    return location;
   }
 }

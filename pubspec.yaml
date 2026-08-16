@@ -36,6 +36,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   geocoding: ^5.0.0
   geolocator: ^14.0.3
+  flutter_local_notifications: 22.2.0
+  supabase_flutter: 2.16.0
+  flutter_map: 8.3.1
+  latlong2: 0.10.1
+  http: 1.6.0
+  shared_preferences: 2.5.5
 
 dev_dependencies:
   flutter_test:

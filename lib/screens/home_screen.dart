@@ -27,6 +27,22 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoadingLocation = false;
 
   @override
+  void initState() {
+    super.initState();
+    _restoreLastLocation();
+  }
+
+  Future<void> _restoreLastLocation() async {
+    final location = await _locationService.getSavedLocation();
+    if (!mounted || location == null) return;
+    setState(() {
+      _locationLabel = location.label;
+      _coordinates =
+          '${location.latitude.toStringAsFixed(5)}Â° N, ${location.longitude.toStringAsFixed(5)}Â° E';
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     const risk = RiskService();
     return Scaffold(

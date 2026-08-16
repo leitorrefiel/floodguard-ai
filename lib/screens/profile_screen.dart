@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/device_location_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
+import 'report_hazard_screen.dart';
 import 'safety_tips_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -56,6 +58,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _message(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
+  Future<void> _signOut() async {
+    await Supabase.instance.client.auth.signOut();
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Profile')),
@@ -78,8 +84,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Community Member',
+                      Text(
+                        Supabase.instance.client.auth.currentUser?.email ??
+                            'Community Member',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 18,
@@ -119,11 +126,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onTap: _isLoading ? null : _refreshLocation,
           ),
         ),
-        _option(
-          Icons.history,
-          'Report History',
-          'View your submitted hazard reports',
-          'No submitted reports yet.',
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.history, color: AppTheme.blue),
+            title: const Text('Report History'),
+            subtitle: const Text('View your submitted hazard reports'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const ReportHazardScreen(),
+              ),
+            ),
+          ),
         ),
         Card(
           child: ListTile(
@@ -150,6 +165,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           onPressed: () => _message('Profile preferences saved.'),
           icon: const Icon(Icons.save_outlined),
           label: const Text('Save Preferences'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _signOut,
+          icon: const Icon(Icons.logout),
+          label: const Text('Sign out'),
         ),
       ],
     ),
