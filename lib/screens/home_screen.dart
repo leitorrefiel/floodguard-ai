@@ -342,7 +342,12 @@ class _HomeScreenState extends State<HomeScreen> {
         longitude: location.longitude,
       );
       if (!mounted) return;
-      setState(() => _riskAssessment = _riskService.assess(forecast));
+      setState(
+        () => _riskAssessment = _riskService.assess(
+          forecast,
+          locationLabel: location.label,
+        ),
+      );
     } on WeatherException catch (error) {
       if (mounted) setState(() => _riskError = error.message);
     } catch (_) {

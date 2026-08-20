@@ -18,7 +18,6 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
   final _weatherService = WeatherService();
   final _riskService = const RiskService();
 
-  DeviceLocation? _location;
   RiskAssessment? _assessment;
   String? _error;
   bool _isLoading = true;
@@ -47,8 +46,10 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
       );
       if (!mounted) return;
       setState(() {
-        _location = location;
-        _assessment = _riskService.assess(forecast);
+        _assessment = _riskService.assess(
+          forecast,
+          locationLabel: location.label,
+        );
       });
     } on LocationAccessException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -85,9 +86,8 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
               subtitle: Text(_error!),
             ),
           )
-        else
-          _locationCard(),
-        const SizedBox(height: 12),
+        else if (!_isLoading)
+          const SizedBox.shrink(),
         if (_isLoading)
           const Card(
             child: Padding(
@@ -108,17 +108,6 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
         else if (_assessment != null)
           ..._riskContent(_assessment!),
       ],
-    ),
-  );
-
-  Widget _locationCard() => Card(
-    child: ListTile(
-      leading: const Icon(Icons.location_on, color: AppTheme.blue),
-      title: const Text('Your Location', style: TextStyle(fontSize: 12)),
-      subtitle: Text(
-        _location?.label ?? 'No location selected',
-        style: const TextStyle(fontWeight: FontWeight.bold),
-      ),
     ),
   );
 
@@ -195,7 +184,43 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
     ),
     const SizedBox(height: 20),
     Text(
-      'AI Recommended Actions',
+      'AI Analysis',
+      style: Theme.of(
+        context,
+      ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+    ),
+    const SizedBox(height: 8),
+    Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(assessment.aiExplanation),
+            const SizedBox(height: 12),
+            for (final factor in assessment.riskFactors)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.auto_awesome,
+                      size: 17,
+                      color: AppTheme.blue,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(factor)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+    const SizedBox(height: 20),
+    Text(
+      'AI-Generated Actions',
       style: Theme.of(
         context,
       ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
