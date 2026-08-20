@@ -25,8 +25,15 @@ class HazardReport {
     severity: json['severity'] as String? ?? 'Moderate',
     location: json['location'] as String? ?? '',
     description: json['description'] as String? ?? '',
-    createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
-    updatedAt: DateTime.parse(json['updatedAt'] as String).toLocal(),
+    createdAt: DateTime.parse(
+      json['createdAt'] as String? ?? json['created_at'] as String,
+    ).toLocal(),
+    updatedAt: DateTime.parse(
+      json['updatedAt'] as String? ??
+          json['updated_at'] as String? ??
+          json['createdAt'] as String? ??
+          json['created_at'] as String,
+    ).toLocal(),
   );
 
   final String id;
@@ -45,6 +52,22 @@ class HazardReport {
     'description': description,
     'createdAt': createdAt.toUtc().toIso8601String(),
     'updatedAt': updatedAt.toUtc().toIso8601String(),
+  };
+
+  Map<String, dynamic> toApiInsertJson({String? userId}) => {
+    if (userId != null) 'user_id': userId,
+    'type': type.name,
+    'severity': severity,
+    'location': location,
+    'description': description,
+  };
+
+  Map<String, dynamic> toApiUpdateJson() => {
+    'type': type.name,
+    'severity': severity,
+    'location': location,
+    'description': description,
+    'updated_at': DateTime.now().toUtc().toIso8601String(),
   };
 
   HazardReport copyWith({

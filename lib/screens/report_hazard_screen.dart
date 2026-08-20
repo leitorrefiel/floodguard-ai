@@ -16,11 +16,15 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
   final _reportService = HazardReportService();
   final _location = TextEditingController(text: 'Baliwag, Bulacan, PH');
   final _description = TextEditingController();
+  final _search = TextEditingController();
 
   HazardType _type = HazardType.floodedRoad;
   String _severity = 'Moderate';
+  String _severityFilter = 'All';
+  HazardType? _typeFilter;
   List<HazardReport> _reports = const [];
   HazardReport? _editingReport;
+  String _storageLabel = 'Local device storage';
   bool _isLoading = true;
   bool _isSaving = false;
 
@@ -34,6 +38,7 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
   void dispose() {
     _location.dispose();
     _description.dispose();
+    _search.dispose();
     super.dispose();
   }
 
@@ -42,6 +47,7 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
     if (!mounted) return;
     setState(() {
       _reports = reports;
+      _storageLabel = _reportService.storageLabel;
       _isLoading = false;
     });
   }
@@ -53,30 +59,37 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
     final location = _location.text.trim();
     final wasEditing = _editingReport != null;
 
-    if (_editingReport == null) {
-      await _reportService.createReport(
-        type: _type,
-        severity: _severity,
-        location: location,
-        description: description,
-      );
-    } else {
-      await _reportService.updateReport(
-        _editingReport!.copyWith(
+    try {
+      if (_editingReport == null) {
+        await _reportService.createReport(
           type: _type,
           severity: _severity,
           location: location,
           description: description,
-        ),
-      );
-    }
+        );
+      } else {
+        await _reportService.updateReport(
+          _editingReport!.copyWith(
+            type: _type,
+            severity: _severity,
+            location: location,
+            description: description,
+          ),
+        );
+      }
 
-    if (!mounted) return;
-    _resetForm();
-    await _loadReports();
-    if (!mounted) return;
-    setState(() => _isSaving = false);
-    _message(wasEditing ? 'Hazard report updated.' : 'Hazard report created.');
+      if (!mounted) return;
+      _resetForm();
+      await _loadReports();
+      if (!mounted) return;
+      _message(
+        '${wasEditing ? 'Hazard report updated' : 'Hazard report created'} via $_storageLabel.',
+      );
+    } catch (_) {
+      if (mounted) _message('Unable to save the hazard report.');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   Future<void> _deleteReport(HazardReport report) async {
@@ -104,7 +117,22 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
     if (!mounted) return;
     if (_editingReport?.id == report.id) _resetForm();
     await _loadReports();
-    if (mounted) _message('Hazard report deleted.');
+    if (mounted) _message('Hazard report deleted via $_storageLabel.');
+  }
+
+  List<HazardReport> get _filteredReports {
+    final query = _search.text.trim().toLowerCase();
+    return _reports.where((report) {
+      final matchesText =
+          query.isEmpty ||
+          hazardTypeLabel(report.type).toLowerCase().contains(query) ||
+          report.location.toLowerCase().contains(query) ||
+          report.description.toLowerCase().contains(query);
+      final matchesSeverity =
+          _severityFilter == 'All' || report.severity == _severityFilter;
+      final matchesType = _typeFilter == null || report.type == _typeFilter;
+      return matchesText && matchesSeverity && matchesType;
+    }).toList();
   }
 
   void _editReport(HazardReport report) {
@@ -131,44 +159,124 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Hazard Reports')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        _buildForm(context),
-        const SizedBox(height: 22),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Saved Reports',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+  Widget build(BuildContext context) {
+    final filteredReports = _filteredReports;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Hazard Reports')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          _buildForm(context),
+          const SizedBox(height: 22),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Saved Reports',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              Text('${filteredReports.length}/${_reports.length} shown'),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text('Storage: $_storageLabel'),
+          const SizedBox(height: 10),
+          _buildFilters(),
+          const SizedBox(height: 10),
+          if (_isLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (_reports.isEmpty)
+            const Card(
+              child: ListTile(
+                leading: Icon(Icons.inbox_outlined, color: AppTheme.blue),
+                title: Text('No hazard reports yet'),
+                subtitle: Text('Create a report to store it with the API.'),
+              ),
+            )
+          else if (filteredReports.isEmpty)
+            const Card(
+              child: ListTile(
+                leading: Icon(Icons.search_off_outlined, color: AppTheme.blue),
+                title: Text('No matching reports'),
+                subtitle: Text('Clear search or filters to view all reports.'),
+              ),
+            )
+          else
+            ...filteredReports.map(_buildReportCard),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilters() => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          TextField(
+            controller: _search,
+            decoration: InputDecoration(
+              border: const OutlineInputBorder(),
+              labelText: 'Search reports',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      onPressed: () => setState(_search.clear),
+                      icon: const Icon(Icons.close),
+                      tooltip: 'Clear search',
+                    ),
             ),
-            Text('${_reports.length} total'),
-          ],
-        ),
-        const SizedBox(height: 10),
-        if (_isLoading)
-          const Center(
-            child: Padding(
-              padding: EdgeInsets.all(24),
-              child: CircularProgressIndicator(),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _severityFilter,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'Severity filter',
             ),
-          )
-        else if (_reports.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.inbox_outlined, color: AppTheme.blue),
-              title: Text('No hazard reports yet'),
-              subtitle: Text('Create a report to store it on this device.'),
+            items: ['All', 'Low', 'Moderate', 'High', 'Critical']
+                .map(
+                  (value) =>
+                      DropdownMenuItem(value: value, child: Text(value)),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _severityFilter = value);
+            },
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<HazardType?>(
+            initialValue: _typeFilter,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'Hazard type filter',
             ),
-          )
-        else
-          ..._reports.map(_buildReportCard),
-      ],
+            items: [
+              const DropdownMenuItem<HazardType?>(
+                value: null,
+                child: Text('All hazard types'),
+              ),
+              ...HazardType.values.map(
+                (type) => DropdownMenuItem<HazardType?>(
+                  value: type,
+                  child: Text(hazardTypeLabel(type)),
+                ),
+              ),
+            ],
+            onChanged: (value) => setState(() => _typeFilter = value),
+          ),
+        ],
+      ),
     ),
   );
 
