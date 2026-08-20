@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
@@ -48,8 +47,8 @@ class DeviceLocationService {
     : _geocoding = geocoding,
       _client = client ?? http.Client();
 
-  static const _googlePlacesApiKey = String.fromEnvironment(
-    'GOOGLE_PLACES_API_KEY',
+  static const _geoapifyApiKey = String.fromEnvironment(
+    'GEOAPIFY_API_KEY',
   );
   static const _labelKey = 'saved_location_label';
   static const _latitudeKey = 'saved_location_latitude';
@@ -57,7 +56,6 @@ class DeviceLocationService {
 
   Geocoding? _geocoding;
   final http.Client _client;
-  String _placesSessionToken = _newPlacesSessionToken();
 
   Future<DeviceLocation?> getSavedLocation() async {
     final preferences = await SharedPreferences.getInstance();
@@ -82,7 +80,6 @@ class DeviceLocationService {
   Future<DeviceLocation> selectSuggestion(LocationSuggestion suggestion) async {
     final location = suggestion.toDeviceLocation();
     await saveLocation(location);
-    _placesSessionToken = _newPlacesSessionToken();
     return location;
   }
 
@@ -90,12 +87,12 @@ class DeviceLocationService {
     final trimmedQuery = query.trim();
     if (trimmedQuery.length < 3) return const [];
 
-    if (_googlePlacesApiKey.isNotEmpty) {
+    if (_geoapifyApiKey.isNotEmpty) {
       try {
-        final googleSuggestions = await _searchGooglePlaces(trimmedQuery);
-        if (googleSuggestions.isNotEmpty) return googleSuggestions;
+        final geoapifySuggestions = await _searchGeoapify(trimmedQuery);
+        if (geoapifySuggestions.isNotEmpty) return geoapifySuggestions;
       } catch (_) {
-        // Keep search usable when the Google key, billing, or network is not ready.
+        // Keep search usable when the Geoapify key, quota, or network is not ready.
       }
     }
 
@@ -114,25 +111,17 @@ class DeviceLocationService {
     return suggestions.take(12).toList();
   }
 
-  Future<List<LocationSuggestion>> _searchGooglePlaces(String query) async {
+  Future<List<LocationSuggestion>> _searchGeoapify(String query) async {
     final response = await _client
-        .post(
-          Uri.https('places.googleapis.com', '/v1/places:autocomplete'),
-          headers: const {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': _googlePlacesApiKey,
-            'X-Goog-FieldMask':
-                'suggestions.placePrediction.placeId,'
-                'suggestions.placePrediction.text.text,'
-                'suggestions.placePrediction.structuredFormat.mainText.text,'
-                'suggestions.placePrediction.structuredFormat.secondaryText.text',
-          },
-          body: jsonEncode({
-            'input': query,
-            'includedRegionCodes': ['ph'],
-            'languageCode': 'en',
-            'regionCode': 'PH',
-            'sessionToken': _placesSessionToken,
+        .get(
+          Uri.https('api.geoapify.com', '/v1/geocode/autocomplete', {
+            'text': query,
+            'format': 'json',
+            'filter': 'countrycode:ph',
+            'bias': 'countrycode:ph',
+            'lang': 'en',
+            'limit': '10',
+            'apiKey': _geoapifyApiKey,
           }),
         )
         .timeout(const Duration(seconds: 8));
@@ -144,80 +133,12 @@ class DeviceLocationService {
     }
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final suggestionsJson = json['suggestions'] as List<dynamic>? ?? const [];
-    final suggestions = <LocationSuggestion>[];
-    final seen = <String>{};
-    for (final item in suggestionsJson.cast<Map<String, dynamic>>()) {
-      final prediction = item['placePrediction'] as Map<String, dynamic>?;
-      if (prediction == null) continue;
-      final suggestion = await _suggestionFromGooglePrediction(prediction);
-      if (suggestion == null) continue;
-      final key = '${suggestion.title}|${suggestion.subtitle}'.toLowerCase();
-      if (seen.add(key)) suggestions.add(suggestion);
-      if (suggestions.length >= 8) break;
-    }
-    return suggestions;
-  }
-
-  Future<LocationSuggestion?> _suggestionFromGooglePrediction(
-    Map<String, dynamic> prediction,
-  ) async {
-    final placeId = _cleanText(prediction['placeId']);
-    if (placeId.isEmpty) return null;
-
-    final structuredFormat =
-        prediction['structuredFormat'] as Map<String, dynamic>? ?? const {};
-    final mainText =
-        structuredFormat['mainText'] as Map<String, dynamic>? ?? const {};
-    final secondaryText =
-        structuredFormat['secondaryText'] as Map<String, dynamic>? ?? const {};
-    final fallbackText = prediction['text'] as Map<String, dynamic>? ?? const {};
-    final title = _firstNonEmpty([mainText['text'], fallbackText['text']]);
-    final subtitle = _cleanText(secondaryText['text']);
-    final details = await _googlePlaceDetails(placeId);
-    if (details == null) return null;
-
-    return LocationSuggestion(
-      title: title,
-      subtitle: subtitle.isEmpty ? details.subtitle : subtitle,
-      latitude: details.latitude,
-      longitude: details.longitude,
-    );
-  }
-
-  Future<LocationSuggestion?> _googlePlaceDetails(String placeId) async {
-    final response = await _client
-        .get(
-          Uri.https('places.googleapis.com', '/v1/places/$placeId', {
-            'regionCode': 'PH',
-            'sessionToken': _placesSessionToken,
-          }),
-          headers: const {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': _googlePlacesApiKey,
-            'X-Goog-FieldMask':
-                'id,displayName,formattedAddress,shortFormattedAddress,location',
-          },
-        )
-        .timeout(const Duration(seconds: 8));
-    if (response.statusCode != 200) return null;
-
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final location = json['location'] as Map<String, dynamic>? ?? const {};
-    final latitude = (location['latitude'] as num?)?.toDouble();
-    final longitude = (location['longitude'] as num?)?.toDouble();
-    if (latitude == null || longitude == null) return null;
-
-    final displayName = json['displayName'] as Map<String, dynamic>? ?? const {};
-    return LocationSuggestion(
-      title: _firstNonEmpty([displayName['text'], json['formattedAddress']]),
-      subtitle: _firstNonEmpty([
-        json['shortFormattedAddress'],
-        json['formattedAddress'],
-      ]),
-      latitude: latitude,
-      longitude: longitude,
-    );
+    final results = json['results'] as List<dynamic>? ?? const [];
+    return results
+        .cast<Map<String, dynamic>>()
+        .map(_suggestionFromGeoapify)
+        .whereType<LocationSuggestion>()
+        .toList();
   }
 
   Future<List<LocationSuggestion>> _searchNominatim(String query) async {
@@ -390,6 +311,42 @@ class DeviceLocationService {
     );
   }
 
+  LocationSuggestion? _suggestionFromGeoapify(Map<String, dynamic> json) {
+    final latitude = (json['lat'] as num?)?.toDouble();
+    final longitude = (json['lon'] as num?)?.toDouble();
+    if (latitude == null || longitude == null) return null;
+
+    final title = _firstNonEmpty([
+      json['address_line1'],
+      json['name'],
+      _joinNonEmpty([json['housenumber'], json['street']]),
+      json['street'],
+      json['suburb'],
+      json['district'],
+      json['city'],
+      json['municipality'],
+      json['formatted'],
+    ]);
+    final subtitle = _firstNonEmpty([
+      json['address_line2'],
+      _joinNonEmpty([
+        json['suburb'],
+        json['district'],
+        json['city'],
+        json['county'],
+        json['state'],
+      ]),
+      json['formatted'],
+    ]);
+
+    return LocationSuggestion(
+      title: title,
+      subtitle: subtitle == title ? 'Tap to use this location' : subtitle,
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
+
   String _subtitleFor(
     String title,
     String displayName,
@@ -439,13 +396,4 @@ class DeviceLocationService {
     return 'Selected location';
   }
 
-  static String _newPlacesSessionToken() {
-    final random = Random();
-    final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-    final suffix = List.generate(
-      4,
-      (_) => random.nextInt(0x10000).toRadixString(16).padLeft(4, '0'),
-    ).join();
-    return '$timestamp$suffix';
-  }
 }
