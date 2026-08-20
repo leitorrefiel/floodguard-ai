@@ -84,8 +84,24 @@ class DeviceLocationService {
     final trimmedQuery = query.trim();
     if (trimmedQuery.length < 3) return const [];
 
+    final suggestions = <LocationSuggestion>[];
+    final seen = <String>{};
+    for (final searchQuery in _queryVariants(trimmedQuery)) {
+      final results = await _searchNominatim(searchQuery);
+      for (final suggestion in results) {
+        final key =
+            '${suggestion.title}|${suggestion.subtitle}'.toLowerCase();
+        if (seen.add(key)) suggestions.add(suggestion);
+      }
+      if (suggestions.length >= 12) break;
+    }
+
+    return suggestions.take(12).toList();
+  }
+
+  Future<List<LocationSuggestion>> _searchNominatim(String query) async {
     final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
-      'q': trimmedQuery,
+      'q': query,
       'format': 'jsonv2',
       'addressdetails': '1',
       'namedetails': '1',
@@ -115,6 +131,44 @@ class DeviceLocationService {
         .map(_suggestionFromNominatim)
         .whereType<LocationSuggestion>()
         .toList();
+  }
+
+  List<String> _queryVariants(String query) {
+    final normalized = query.toLowerCase().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+    final variants = <String>[];
+
+    void add(String value) {
+      final cleaned = value.trim();
+      if (cleaned.length < 3) return;
+      if (variants.any((item) => item.toLowerCase() == cleaned.toLowerCase())) {
+        return;
+      }
+      variants.add(cleaned);
+    }
+
+    final smMatch = RegExp(r'^s\.?m\.?\s+(.+)$').firstMatch(normalized);
+    if (smMatch != null) {
+      final place = smMatch.group(1)!.trim();
+      add('SM City $place');
+      add('SM Center $place');
+      add('mall $place');
+    }
+
+    final robinsonsMatch = RegExp(
+      r'^(robinson|robinsons)\s+(.+)$',
+    ).firstMatch(normalized);
+    if (robinsonsMatch != null) {
+      final place = robinsonsMatch.group(2)!.trim();
+      add('Robinsons Place $place');
+      add('Robinsons $place');
+    }
+
+    add(query);
+    add('$query Philippines');
+    return variants;
   }
 
   Future<DeviceLocation> getCurrentLocation() async {
