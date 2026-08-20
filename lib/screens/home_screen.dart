@@ -22,9 +22,16 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _locationService = DeviceLocationService();
-  String _locationLabel = 'Tap to use your current location';
+  final _locationSearch = TextEditingController();
+  String _locationLabel = 'Tap to set your location';
   String? _coordinates;
   bool _isLoadingLocation = false;
+
+  @override
+  void dispose() {
+    _locationSearch.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -281,11 +288,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final location = await _locationService.getCurrentLocation();
       if (!mounted) return;
-      setState(() {
-        _locationLabel = location.label;
-        _coordinates =
-            '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
-      });
+      _setLocation(location);
       _showMessage('Current location updated.');
     } on LocationAccessException catch (error) {
       if (mounted) {
@@ -308,6 +311,99 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _searchLocation() async {
+    final query = _locationSearch.text.trim();
+    if (query.isEmpty) {
+      _showMessage('Enter a location to search.');
+      return;
+    }
+
+    setState(() => _isLoadingLocation = true);
+    _showMessage('Searching location...');
+    try {
+      final location = await _locationService.searchLocation(query);
+      if (!mounted) return;
+      _setLocation(location);
+      Navigator.pop(context);
+      _showMessage('Location set to ${location.label}.');
+    } on LocationAccessException catch (error) {
+      if (mounted) _showMessage(error.message);
+    } finally {
+      if (mounted) setState(() => _isLoadingLocation = false);
+    }
+  }
+
+  void _setLocation(DeviceLocation location) {
+    setState(() {
+      _locationLabel = location.label;
+      _coordinates =
+          '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
+    });
+  }
+
+  void _openLocationSheet() {
+    _locationSearch.text = _locationLabel == 'Tap to set your location'
+        ? ''
+        : _locationLabel;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.location_on_outlined, color: AppTheme.blue),
+                const SizedBox(width: 8),
+                Text(
+                  'Your Location',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _locationSearch,
+              textInputAction: TextInputAction.search,
+              decoration: const InputDecoration(
+                labelText: 'Search city, barangay, or address',
+                prefixIcon: Icon(Icons.search),
+              ),
+              onSubmitted: (_) => _searchLocation(),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _isLoadingLocation ? null : _searchLocation,
+              icon: const Icon(Icons.search),
+              label: const Text('Set Searched Location'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _isLoadingLocation
+                  ? null
+                  : () {
+                      Navigator.pop(context);
+                      _refreshLocation();
+                    },
+              icon: const Icon(Icons.my_location),
+              label: const Text('Use Current Location'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showMessage(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
@@ -315,7 +411,7 @@ class _HomeScreenState extends State<HomeScreen> {
     child: ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       leading: const Icon(Icons.location_on, color: AppTheme.blue),
-      title: const Text('Current Location', style: TextStyle(fontSize: 12)),
+      title: const Text('Your Location', style: TextStyle(fontSize: 12)),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -334,11 +430,11 @@ class _HomeScreenState extends State<HomeScreen> {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : IconButton.filledTonal(
-              onPressed: _refreshLocation,
-              icon: const Icon(Icons.my_location),
-              tooltip: 'Update current location',
+              onPressed: _openLocationSheet,
+              icon: const Icon(Icons.edit_location_alt_outlined),
+              tooltip: 'Change location',
             ),
-      onTap: _isLoadingLocation ? null : _refreshLocation,
+      onTap: _isLoadingLocation ? null : _openLocationSheet,
     ),
   );
 

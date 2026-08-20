@@ -48,6 +48,37 @@ class DeviceLocationService {
     await preferences.setDouble(_longitudeKey, location.longitude);
   }
 
+  Future<DeviceLocation> searchLocation(String query) async {
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.length < 3) {
+      throw const LocationAccessException('Enter a more specific location.');
+    }
+
+    try {
+      final locations = await (_geocoding ??= Geocoding()).locationFromAddress(
+        trimmedQuery,
+      );
+      if (locations.isEmpty) {
+        throw const LocationAccessException('No location found.');
+      }
+
+      final result = locations.first;
+      final location = DeviceLocation(
+        label: trimmedQuery,
+        latitude: result.latitude,
+        longitude: result.longitude,
+      );
+      await _saveLocation(location);
+      return location;
+    } on LocationAccessException {
+      rethrow;
+    } catch (_) {
+      throw const LocationAccessException(
+        'Unable to search that location right now.',
+      );
+    }
+  }
+
   Future<DeviceLocation> getCurrentLocation() async {
     if (!await Geolocator.isLocationServiceEnabled()) {
       throw const LocationAccessException(
