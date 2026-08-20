@@ -88,8 +88,10 @@ class DeviceLocationService {
       'q': trimmedQuery,
       'format': 'jsonv2',
       'addressdetails': '1',
+      'namedetails': '1',
+      'dedupe': '1',
       'countrycodes': 'ph',
-      'limit': '8',
+      'limit': '12',
       'accept-language': 'en',
     });
 
@@ -179,38 +181,85 @@ class DeviceLocationService {
     final longitude = double.tryParse(json['lon'] as String? ?? '');
     if (latitude == null || longitude == null) return null;
 
-    final displayName = (json['display_name'] as String? ?? '').trim();
+    final displayName = _cleanText(json['display_name']);
     final address = json['address'] as Map<String, dynamic>? ?? const {};
+    final roadAddress = _joinNonEmpty([
+      address['house_number'],
+      address['road'],
+    ]);
     final title = _firstNonEmpty([
+      json['name'],
+      roadAddress,
+      address['amenity'],
+      address['shop'],
+      address['tourism'],
+      address['office'],
+      address['building'],
+      address['leisure'],
       address['road'],
       address['neighbourhood'],
       address['suburb'],
+      address['quarter'],
       address['village'],
       address['town'],
       address['city'],
-      json['name'],
       displayName.split(',').first,
     ]);
-    final subtitle = _firstNonEmpty([
-      address['city'],
-      address['town'],
-      address['municipality'],
-      address['state'],
-      displayName,
-    ]);
+    final subtitle = _subtitleFor(title, displayName, address);
 
     return LocationSuggestion(
       title: title,
-      subtitle: subtitle == title ? displayName : subtitle,
+      subtitle: subtitle,
       latitude: latitude,
       longitude: longitude,
     );
   }
 
+  String _subtitleFor(
+    String title,
+    String displayName,
+    Map<String, dynamic> address,
+  ) {
+    final parts = <String>[
+      _cleanText(address['road']),
+      _cleanText(address['neighbourhood']),
+      _cleanText(address['suburb']),
+      _cleanText(address['quarter']),
+      _cleanText(address['village']),
+      _cleanText(address['city']),
+      _cleanText(address['town']),
+      _cleanText(address['municipality']),
+      _cleanText(address['county']),
+      _cleanText(address['state']),
+    ];
+    final uniqueParts = <String>[];
+    for (final part in parts) {
+      if (part.isEmpty) continue;
+      if (part.toLowerCase() == title.toLowerCase()) continue;
+      if (uniqueParts.any((item) => item.toLowerCase() == part.toLowerCase())) {
+        continue;
+      }
+      uniqueParts.add(part);
+      if (uniqueParts.length == 3) break;
+    }
+
+    if (uniqueParts.isNotEmpty) return uniqueParts.join(', ');
+    return displayName.isEmpty || displayName == title
+        ? 'Tap to use this location'
+        : displayName;
+  }
+
+  String _joinNonEmpty(List<dynamic> values) {
+    final parts = values.map(_cleanText).where((value) => value.isNotEmpty);
+    return parts.join(' ');
+  }
+
+  String _cleanText(dynamic value) => value?.toString().trim() ?? '';
+
   String _firstNonEmpty(List<dynamic> values) {
     for (final value in values) {
-      final text = value?.toString().trim();
-      if (text != null && text.isNotEmpty) return text;
+      final text = _cleanText(value);
+      if (text.isNotEmpty) return text;
     }
     return 'Selected location';
   }

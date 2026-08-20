@@ -474,9 +474,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
       if (!mounted || query != _search.text.trim()) return;
       setState(() {
         _suggestions = suggestions;
-        _error = suggestions.isEmpty
-            ? 'No matching Philippine locations.'
-            : null;
+        _error = suggestions.isEmpty ? 'No matching locations found.' : null;
       });
     } on LocationAccessException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -509,9 +507,9 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
         padding: EdgeInsets.only(bottom: bottomInset),
         child: DraggableScrollableSheet(
           expand: false,
-          initialChildSize: bottomInset > 0 ? .68 : .52,
+          initialChildSize: bottomInset > 0 ? .74 : .56,
           minChildSize: .45,
-          maxChildSize: .86,
+          maxChildSize: .9,
           builder: (context, controller) => DecoratedBox(
             decoration: const BoxDecoration(
               color: Colors.white,
@@ -540,11 +538,11 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 4,
-                    vertical: 2,
+                    vertical: 0,
                   ),
                   leading: const Icon(
                     Icons.near_me_outlined,
@@ -557,7 +555,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                   subtitle: const Text('Detect from this device'),
                   onTap: _isSelecting ? null : widget.onUseCurrentLocation,
                 ),
-                const SizedBox(height: 10),
+                const Divider(height: 18),
                 TextField(
                   controller: _search,
                   autofocus: true,
@@ -592,13 +590,15 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                 ],
                 const SizedBox(height: 12),
                 if (_suggestions.isEmpty && !_isSearching)
-                  const Card(
-                    child: ListTile(
-                      leading: Icon(Icons.search_outlined),
-                      title: Text('Search for a location'),
-                      subtitle: Text(
-                        'Results are limited to the Philippines.',
-                      ),
+                  const ListTile(
+                    contentPadding: EdgeInsets.symmetric(horizontal: 4),
+                    leading: Icon(Icons.search_outlined),
+                    title: Text(
+                      'Search for a location',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      'Type an address, street, barangay, city, or landmark.',
                     ),
                   )
                 else
@@ -611,16 +611,32 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
     );
   }
 
-  Widget _suggestionTile(LocationSuggestion suggestion) => Card(
-    child: ListTile(
-      leading: const Icon(Icons.radio_button_unchecked, color: AppTheme.muted),
-      title: Text(
-        suggestion.title,
-        style: const TextStyle(fontWeight: FontWeight.w800),
+  Widget _suggestionTile(LocationSuggestion suggestion) => Column(
+    children: [
+      ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        leading: const Icon(
+          Icons.location_on_outlined,
+          color: AppTheme.ink,
+          size: 24,
+        ),
+        title: Text(
+          suggestion.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+        ),
+        subtitle: Text(
+          suggestion.subtitle,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13),
+        ),
+        onTap: _isSelecting ? null : () => _selectSuggestion(suggestion),
       ),
-      subtitle: Text(suggestion.subtitle),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: _isSelecting ? null : () => _selectSuggestion(suggestion),
-    ),
+      const Divider(height: 1, indent: 44),
+    ],
   );
 }
