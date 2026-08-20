@@ -277,6 +277,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _refreshLocation() async {
     setState(() => _isLoadingLocation = true);
+    _showMessage('Updating your current location...');
     try {
       final location = await _locationService.getCurrentLocation();
       if (!mounted) return;
@@ -285,6 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _coordinates =
             '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
       });
+      _showMessage('Current location updated.');
     } on LocationAccessException catch (error) {
       if (mounted) {
         _showMessage(error.message);
@@ -311,6 +313,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _locationCard(BuildContext context) => Card(
     child: ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       leading: const Icon(Icons.location_on, color: AppTheme.blue),
       title: const Text('Current Location', style: TextStyle(fontSize: 12)),
       subtitle: Column(
@@ -330,7 +333,11 @@ class _HomeScreenState extends State<HomeScreen> {
               height: 20,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : const Icon(Icons.my_location, color: AppTheme.blue),
+          : IconButton.filledTonal(
+              onPressed: _refreshLocation,
+              icon: const Icon(Icons.my_location),
+              tooltip: 'Update current location',
+            ),
       onTap: _isLoadingLocation ? null : _refreshLocation,
     ),
   );

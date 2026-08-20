@@ -68,16 +68,13 @@ class DeviceLocationService {
       );
     }
 
-    final cachedPosition = await Geolocator.getLastKnownPosition(
-      forceAndroidLocationManager: true,
-    );
+    final cachedPosition = await Geolocator.getLastKnownPosition();
     final position =
         cachedPosition ??
         await Geolocator.getCurrentPosition(
-          locationSettings: AndroidSettings(
+          locationSettings: const LocationSettings(
             accuracy: LocationAccuracy.high,
-            forceLocationManager: true,
-            timeLimit: const Duration(seconds: 20),
+            timeLimit: Duration(seconds: 15),
           ),
         );
 
