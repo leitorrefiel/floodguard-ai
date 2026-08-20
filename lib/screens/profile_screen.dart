@@ -34,7 +34,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {
         _location = location.label;
         _coordinates =
-            '${location.latitude.toStringAsFixed(5)}° N, ${location.longitude.toStringAsFixed(5)}° E';
+            '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
       });
     } on LocationAccessException catch (error) {
       _setUnavailable(error.message);

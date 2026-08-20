@@ -86,7 +86,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  '• Stay informed and monitor local alerts.\n• Secure important items and move to higher ground.\n• Turn off electrical appliances and utilities if needed.\n• Prepare an evacuation plan and safe meeting place.',
+                  '- Stay informed and monitor local alerts.\n- Secure important items and move to higher ground.\n- Turn off electrical appliances and utilities if needed.\n- Prepare an evacuation plan and safe meeting place.',
                 ),
               ],
             ),

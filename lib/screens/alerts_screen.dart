@@ -180,7 +180,7 @@ class _AlertCard extends StatelessWidget {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         subtitle: Text(
-          '${alert.area == null ? '' : '${alert.area} • '}${alert.message}',
+          '${alert.area == null ? '' : '${alert.area} - '}${alert.message}',
         ),
         isThreeLine: true,
         trailing: IconButton(

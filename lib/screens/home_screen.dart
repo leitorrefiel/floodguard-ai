@@ -38,7 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _locationLabel = location.label;
       _coordinates =
-          '${location.latitude.toStringAsFixed(5)}Â° N, ${location.longitude.toStringAsFixed(5)}Â° E';
+          '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
     });
   }
 
@@ -148,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           MetricTile(
                             icon: Icons.cloud,
                             label: 'Weather',
-                            value: '26°C',
+                            value: '26 C',
                             caption: 'Light Rain',
                           ),
                           MetricTile(
@@ -245,7 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Icon(Icons.directions_car_filled_outlined),
                 ),
                 title: Text('Flooded Road'),
-                subtitle: Text('Baliwag, Bulacan • Today, 8:45 AM'),
+                subtitle: Text('Baliwag, Bulacan - Today, 8:45 AM'),
                 trailing: Chip(label: Text('Verified')),
                 onTap: () => Navigator.push(
                   context,
@@ -259,7 +259,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListTile(
                 leading: CircleAvatar(child: Icon(Icons.water_damage_outlined)),
                 title: Text('Blocked Drainage'),
-                subtitle: Text('Baliwag, Bulacan • Today, 7:30 AM'),
+                subtitle: Text('Baliwag, Bulacan - Today, 7:30 AM'),
                 trailing: Chip(label: Text('Verified')),
                 onTap: () => Navigator.push(
                   context,
@@ -283,7 +283,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _locationLabel = location.label;
         _coordinates =
-            '${location.latitude.toStringAsFixed(5)}° N, ${location.longitude.toStringAsFixed(5)}° E';
+            '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
       });
     } on LocationAccessException catch (error) {
       if (mounted) {
