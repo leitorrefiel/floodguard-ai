@@ -89,8 +89,6 @@ class DeviceLocationService {
       'format': 'jsonv2',
       'addressdetails': '1',
       'countrycodes': 'ph',
-      'viewbox': '120.80,15.05,120.98,14.86',
-      'bounded': '1',
       'limit': '8',
       'accept-language': 'en',
     });
