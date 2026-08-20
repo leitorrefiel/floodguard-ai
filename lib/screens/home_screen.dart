@@ -318,9 +318,6 @@ class _HomeScreenState extends State<HomeScreen> {
       isScrollControlled: true,
       builder: (context) => _LocationPickerSheet(
         locationService: _locationService,
-        initialQuery: _locationLabel == 'Tap to set your location'
-            ? ''
-            : _locationLabel,
         onUseCurrentLocation: () {
           Navigator.pop(context);
           _refreshLocation();
@@ -412,13 +409,11 @@ class _HomeScreenState extends State<HomeScreen> {
 class _LocationPickerSheet extends StatefulWidget {
   const _LocationPickerSheet({
     required this.locationService,
-    required this.initialQuery,
     required this.onUseCurrentLocation,
     required this.onLocationSelected,
   });
 
   final DeviceLocationService locationService;
-  final String initialQuery;
   final VoidCallback onUseCurrentLocation;
   final ValueChanged<DeviceLocation> onLocationSelected;
 
@@ -437,10 +432,7 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
   @override
   void initState() {
     super.initState();
-    _search = TextEditingController(text: widget.initialQuery);
-    if (widget.initialQuery.trim().length >= 3) {
-      _queueSearch(widget.initialQuery, immediate: true);
-    }
+    _search = TextEditingController();
   }
 
   @override
@@ -466,10 +458,9 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
       _searchLocations(query);
     } else {
       setState(() => _isSearching = true);
-      _debounce = Timer(
-        const Duration(milliseconds: 450),
-        () => _searchLocations(query),
-      );
+      _debounce = Timer(const Duration(milliseconds: 350), () {
+        _searchLocations(query);
+      });
     }
   }
 
@@ -516,9 +507,9 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
         padding: EdgeInsets.only(bottom: bottomInset),
         child: DraggableScrollableSheet(
           expand: false,
-          initialChildSize: bottomInset > 0 ? .78 : .64,
+          initialChildSize: bottomInset > 0 ? .68 : .52,
           minChildSize: .45,
-          maxChildSize: .9,
+          maxChildSize: .86,
           builder: (context, controller) => DecoratedBox(
             decoration: const BoxDecoration(
               color: Colors.white,
@@ -538,32 +529,30 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    const Icon(Icons.public, color: AppTheme.navy),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Text(
-                        'Philippines',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: null,
-                      child: const Text('Change'),
-                    ),
-                  ],
+                const SizedBox(height: 16),
+                const Text(
+                  'Set Your Location',
+                  style: TextStyle(
+                    color: AppTheme.ink,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-                const Divider(height: 22),
+                const SizedBox(height: 12),
                 ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.near_me_outlined),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  leading: const Icon(
+                    Icons.near_me_outlined,
+                    color: AppTheme.navy,
+                  ),
                   title: const Text(
                     'Use my current location',
                     style: TextStyle(fontWeight: FontWeight.w700),
                   ),
-                  subtitle: const Text('Get location from this device'),
+                  subtitle: const Text('Detect from this device'),
                   onTap: _isSelecting ? null : widget.onUseCurrentLocation,
                 ),
                 const SizedBox(height: 10),
@@ -604,8 +593,8 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                   const Card(
                     child: ListTile(
                       leading: Icon(Icons.search_outlined),
-                      title: Text('Start typing to find locations'),
-                      subtitle: Text('Suggestions update automatically.'),
+                      title: Text('Search for a location'),
+                      subtitle: Text('Results appear while you type.'),
                     ),
                   )
                 else
