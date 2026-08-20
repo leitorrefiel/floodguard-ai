@@ -474,7 +474,9 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
       if (!mounted || query != _search.text.trim()) return;
       setState(() {
         _suggestions = suggestions;
-        _error = suggestions.isEmpty ? 'No matching Philippine locations.' : null;
+        _error = suggestions.isEmpty
+            ? 'No matching Baliwag/Bulacan locations.'
+            : null;
       });
     } on LocationAccessException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -594,7 +596,9 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                     child: ListTile(
                       leading: Icon(Icons.search_outlined),
                       title: Text('Search for a location'),
-                      subtitle: Text('Results appear while you type.'),
+                      subtitle: Text(
+                        'Results are focused around Baliwag, Bulacan.',
+                      ),
                     ),
                   )
                 else
