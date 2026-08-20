@@ -62,6 +62,22 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   @override
   void initState() {
     super.initState();
+    _restoreSavedLocation();
+  }
+
+  Future<void> _restoreSavedLocation() async {
+    final location = await _locationService.getSavedLocation();
+    if (location != null && mounted) {
+      final point = LatLng(location.latitude, location.longitude);
+      setState(() {
+        _mapCenter = point;
+        _assessmentPoint = point;
+        _locationLabel = location.label;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _mapController.move(point, 14);
+      });
+    }
     _loadWeather();
   }
 
@@ -133,38 +149,53 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       children: [
         _mapCard(),
         const SizedBox(height: 12),
-        _layerControls(),
+        _mapToolsCard(),
         const SizedBox(height: 12),
         _hazardSummaryCard(),
         const SizedBox(height: 12),
         _weatherCard(),
         const SizedBox(height: 20),
         Text(
-          'Critical facilities',
+          'Critical Facilities',
           style: Theme.of(
             context,
           ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 4),
         const Text(
-          'Reference entries must be verified with the LGU before emergency use.',
+          'Tap a facility to center it on the map. Use these as planning references and verify availability with the LGU.',
         ),
         const SizedBox(height: 8),
-        ..._facilities.map(_CenterCard.new),
+        ..._facilities.map(
+          (facility) => _CenterCard(
+            facility,
+            onTap: () => _focusFacility(facility),
+          ),
+        ),
         const SizedBox(height: 10),
         const Card(
           child: ListTile(
-            leading: Icon(Icons.phone, color: Colors.red),
-            title: Text('Emergency Hotline'),
+            leading: Icon(Icons.emergency_outlined, color: Colors.red),
+            title: Text('Emergency Help'),
             subtitle: Text(
-              'For immediate emergencies, call 911 or your local DRRMO.',
+              'Use for urgent rescue, medical, or fire emergencies. Confirm local DRRMO numbers with your LGU.',
             ),
-            trailing: Text('911', style: TextStyle(color: Colors.red)),
           ),
         ),
       ],
     ),
   );
+
+  void _focusFacility(_Facility facility) {
+    setState(() {
+      _showFacilities = true;
+      _mapCenter = facility.point;
+    });
+    _mapController.move(facility.point, 16);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Showing ${facility.name} on the map.')),
+    );
+  }
 
   Widget _mapCard() => ClipRRect(
     borderRadius: BorderRadius.circular(16),
@@ -210,7 +241,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     ),
   );
 
-  Widget _layerControls() => Card(
+  Widget _mapToolsCard() => Card(
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -221,58 +252,53 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
               const Icon(Icons.layers_outlined, color: AppTheme.blue),
               const SizedBox(width: 8),
               Text(
-                'Map layers',
+                'Map View',
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
             ],
           ),
+          const SizedBox(height: 6),
+          const Text(
+            'Choose the flood scenario and map details you want to see.',
+          ),
           const SizedBox(height: 10),
           SegmentedButton<String>(
             segments: const [
-              ButtonSegment(value: '5-Year', label: Text('5-Year')),
-              ButtonSegment(value: '25-Year', label: Text('25-Year')),
-              ButtonSegment(value: '100-Year', label: Text('100-Year')),
+              ButtonSegment(value: '5-Year', label: Text('Usual')),
+              ButtonSegment(value: '25-Year', label: Text('Heavy')),
+              ButtonSegment(value: '100-Year', label: Text('Rare')),
             ],
             selected: {_returnPeriod},
             onSelectionChanged: (values) {
               setState(() => _returnPeriod = values.first);
             },
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _showFloodHazard,
-            onChanged: (value) => setState(() => _showFloodHazard = value),
-            title: const Text('Flood hazard overlay'),
-            subtitle: const Text('Low, medium, and high simulated zones'),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _showFacilities,
-            onChanged: (value) => setState(() => _showFacilities = value),
-            title: const Text('Critical facilities'),
-            subtitle: const Text('Evacuation, school, hospital, fire station'),
-          ),
-          Row(
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              const Text('Opacity'),
-              Expanded(
-                child: Slider(
-                  value: _overlayOpacity,
-                  min: .2,
-                  max: .85,
-                  divisions: 13,
-                  label: '${(_overlayOpacity * 100).round()}%',
-                  onChanged: (value) => setState(() => _overlayOpacity = value),
-                ),
+              FilterChip(
+                avatar: const Icon(Icons.flood_outlined, size: 18),
+                label: const Text('Flood zones'),
+                selected: _showFloodHazard,
+                onSelected: (value) => setState(() => _showFloodHazard = value),
+              ),
+              FilterChip(
+                avatar: const Icon(Icons.home_work_outlined, size: 18),
+                label: const Text('Facilities'),
+                selected: _showFacilities,
+                onSelected: (value) => setState(() => _showFacilities = value),
               ),
             ],
           ),
+          const SizedBox(height: 12),
           const _HazardLegend(),
           const SizedBox(height: 8),
           const Text(
-            'Tap the map to move the assessment pin and refresh local weather.',
+            'Tap the map to move the assessment pin. Facility pins show evacuation support, hospitals, schools, and fire response references.',
             style: TextStyle(fontSize: 12),
           ),
         ],
@@ -349,11 +375,14 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     height: 44,
     child: Tooltip(
       message: facility.name,
-      child: CircleAvatar(
-        backgroundColor: Colors.white,
-        child: Icon(
-          _facilityIcon(facility.type),
-          color: _facilityColor(facility),
+      child: GestureDetector(
+        onTap: () => _focusFacility(facility),
+        child: CircleAvatar(
+          backgroundColor: Colors.white,
+          child: Icon(
+            _facilityIcon(facility.type),
+            color: _facilityColor(facility),
+          ),
         ),
       ),
     ),
@@ -451,9 +480,10 @@ class _LegendItem extends StatelessWidget {
 }
 
 class _CenterCard extends StatelessWidget {
-  const _CenterCard(this.facility);
+  const _CenterCard(this.facility, {required this.onTap});
 
   final _Facility facility;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -473,6 +503,8 @@ class _CenterCard extends StatelessWidget {
       ),
       subtitle: Text('${facility.address}\n${_detail(facility)}'),
       isThreeLine: true,
+      trailing: const Icon(Icons.map_outlined),
+      onTap: onTap,
     ),
   );
 
