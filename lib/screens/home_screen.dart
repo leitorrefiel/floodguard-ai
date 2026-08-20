@@ -22,16 +22,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _locationService = DeviceLocationService();
-  final _locationSearch = TextEditingController();
   String _locationLabel = 'Tap to set your location';
   String? _coordinates;
   bool _isLoadingLocation = false;
-
-  @override
-  void dispose() {
-    _locationSearch.dispose();
-    super.dispose();
-  }
 
   @override
   void initState() {
@@ -311,28 +304,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _searchLocation() async {
-    final query = _locationSearch.text.trim();
-    if (query.isEmpty) {
-      _showMessage('Enter a location to search.');
-      return;
-    }
-
-    setState(() => _isLoadingLocation = true);
-    _showMessage('Searching location...');
-    try {
-      final location = await _locationService.searchLocation(query);
-      if (!mounted) return;
-      _setLocation(location);
-      Navigator.pop(context);
-      _showMessage('Location set to ${location.label}.');
-    } on LocationAccessException catch (error) {
-      if (mounted) _showMessage(error.message);
-    } finally {
-      if (mounted) setState(() => _isLoadingLocation = false);
-    }
-  }
-
   void _setLocation(DeviceLocation location) {
     setState(() {
       _locationLabel = location.label;
@@ -342,64 +313,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openLocationSheet() {
-    _locationSearch.text = _locationLabel == 'Tap to set your location'
-        ? ''
-        : _locationLabel;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 20,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.location_on_outlined, color: AppTheme.blue),
-                const SizedBox(width: 8),
-                Text(
-                  'Your Location',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _locationSearch,
-              textInputAction: TextInputAction.search,
-              decoration: const InputDecoration(
-                labelText: 'Search city, barangay, or address',
-                prefixIcon: Icon(Icons.search),
-              ),
-              onSubmitted: (_) => _searchLocation(),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _isLoadingLocation ? null : _searchLocation,
-              icon: const Icon(Icons.search),
-              label: const Text('Set Searched Location'),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _isLoadingLocation
-                  ? null
-                  : () {
-                      Navigator.pop(context);
-                      _refreshLocation();
-                    },
-              icon: const Icon(Icons.my_location),
-              label: const Text('Use Current Location'),
-            ),
-          ],
-        ),
+      builder: (context) => _LocationPickerSheet(
+        locationService: _locationService,
+        initialQuery: _locationLabel == 'Tap to set your location'
+            ? ''
+            : _locationLabel,
+        onUseCurrentLocation: () {
+          Navigator.pop(context);
+          _refreshLocation();
+        },
+        onLocationSelected: (location) {
+          _setLocation(location);
+          Navigator.pop(context);
+          _showMessage('Location set to ${location.label}.');
+        },
       ),
     );
   }
@@ -475,6 +405,229 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    ),
+  );
+}
+
+class _LocationPickerSheet extends StatefulWidget {
+  const _LocationPickerSheet({
+    required this.locationService,
+    required this.initialQuery,
+    required this.onUseCurrentLocation,
+    required this.onLocationSelected,
+  });
+
+  final DeviceLocationService locationService;
+  final String initialQuery;
+  final VoidCallback onUseCurrentLocation;
+  final ValueChanged<DeviceLocation> onLocationSelected;
+
+  @override
+  State<_LocationPickerSheet> createState() => _LocationPickerSheetState();
+}
+
+class _LocationPickerSheetState extends State<_LocationPickerSheet> {
+  late final TextEditingController _search;
+  Timer? _debounce;
+  List<LocationSuggestion> _suggestions = const [];
+  String? _error;
+  bool _isSearching = false;
+  bool _isSelecting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _search = TextEditingController(text: widget.initialQuery);
+    if (widget.initialQuery.trim().length >= 3) {
+      _queueSearch(widget.initialQuery, immediate: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _queueSearch(String value, {bool immediate = false}) {
+    _debounce?.cancel();
+    final query = value.trim();
+    if (query.length < 3) {
+      setState(() {
+        _suggestions = const [];
+        _error = null;
+        _isSearching = false;
+      });
+      return;
+    }
+
+    if (immediate) {
+      _searchLocations(query);
+    } else {
+      setState(() => _isSearching = true);
+      _debounce = Timer(
+        const Duration(milliseconds: 450),
+        () => _searchLocations(query),
+      );
+    }
+  }
+
+  Future<void> _searchLocations(String query) async {
+    setState(() {
+      _isSearching = true;
+      _error = null;
+    });
+    try {
+      final suggestions = await widget.locationService.searchSuggestions(query);
+      if (!mounted || query != _search.text.trim()) return;
+      setState(() {
+        _suggestions = suggestions;
+        _error = suggestions.isEmpty ? 'No matching Philippine locations.' : null;
+      });
+    } on LocationAccessException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Location search failed.');
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  Future<void> _selectSuggestion(LocationSuggestion suggestion) async {
+    setState(() => _isSelecting = true);
+    try {
+      final location = await widget.locationService.selectSuggestion(
+        suggestion,
+      );
+      if (mounted) widget.onLocationSelected(location);
+    } on LocationAccessException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _isSelecting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(bottom: bottomInset),
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: bottomInset > 0 ? .78 : .64,
+          minChildSize: .45,
+          maxChildSize: .9,
+          builder: (context, controller) => DecoratedBox(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: ListView(
+              controller: controller,
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD5DEEC),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    const Icon(Icons.public, color: AppTheme.navy),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Philippines',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: null,
+                      child: const Text('Change'),
+                    ),
+                  ],
+                ),
+                const Divider(height: 22),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.near_me_outlined),
+                  title: const Text(
+                    'Use my current location',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: const Text('Get location from this device'),
+                  onTap: _isSelecting ? null : widget.onUseCurrentLocation,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _search,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    labelText: 'Search city, barangay, or address',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _isSearching
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : _search.text.isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  _search.clear();
+                                  _queueSearch('');
+                                },
+                                icon: const Icon(Icons.close),
+                              ),
+                  ),
+                  onChanged: _queueSearch,
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_error!, style: const TextStyle(color: Colors.red)),
+                ],
+                const SizedBox(height: 12),
+                if (_suggestions.isEmpty && !_isSearching)
+                  const Card(
+                    child: ListTile(
+                      leading: Icon(Icons.search_outlined),
+                      title: Text('Start typing to find locations'),
+                      subtitle: Text('Suggestions update automatically.'),
+                    ),
+                  )
+                else
+                  ..._suggestions.map(_suggestionTile),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _suggestionTile(LocationSuggestion suggestion) => Card(
+    child: ListTile(
+      leading: const Icon(Icons.radio_button_unchecked, color: AppTheme.muted),
+      title: Text(
+        suggestion.title,
+        style: const TextStyle(fontWeight: FontWeight.w800),
+      ),
+      subtitle: Text(suggestion.subtitle),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: _isSelecting ? null : () => _selectSuggestion(suggestion),
     ),
   );
 }

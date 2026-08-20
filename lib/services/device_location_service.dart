@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DeviceLocation {
@@ -19,14 +22,37 @@ class LocationAccessException implements Exception {
   final String message;
 }
 
+class LocationSuggestion {
+  const LocationSuggestion({
+    required this.title,
+    required this.subtitle,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final String title;
+  final String subtitle;
+  final double latitude;
+  final double longitude;
+
+  DeviceLocation toDeviceLocation() => DeviceLocation(
+    label: title,
+    latitude: latitude,
+    longitude: longitude,
+  );
+}
+
 class DeviceLocationService {
-  DeviceLocationService({Geocoding? geocoding}) : _geocoding = geocoding;
+  DeviceLocationService({Geocoding? geocoding, http.Client? client})
+    : _geocoding = geocoding,
+      _client = client ?? http.Client();
 
   static const _labelKey = 'saved_location_label';
   static const _latitudeKey = 'saved_location_latitude';
   static const _longitudeKey = 'saved_location_longitude';
 
   Geocoding? _geocoding;
+  final http.Client _client;
 
   Future<DeviceLocation?> getSavedLocation() async {
     final preferences = await SharedPreferences.getInstance();
@@ -41,11 +67,52 @@ class DeviceLocationService {
     );
   }
 
-  Future<void> _saveLocation(DeviceLocation location) async {
+  Future<void> saveLocation(DeviceLocation location) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString(_labelKey, location.label);
     await preferences.setDouble(_latitudeKey, location.latitude);
     await preferences.setDouble(_longitudeKey, location.longitude);
+  }
+
+  Future<DeviceLocation> selectSuggestion(LocationSuggestion suggestion) async {
+    final location = suggestion.toDeviceLocation();
+    await saveLocation(location);
+    return location;
+  }
+
+  Future<List<LocationSuggestion>> searchSuggestions(String query) async {
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.length < 3) return const [];
+
+    final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': trimmedQuery,
+      'format': 'jsonv2',
+      'addressdetails': '1',
+      'countrycodes': 'ph',
+      'limit': '8',
+      'accept-language': 'en',
+    });
+
+    final response = await _client
+        .get(
+          uri,
+          headers: const {
+            'User-Agent': 'FloodGuardAI/1.0 student prototype',
+          },
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw const LocationAccessException(
+        'Location search is temporarily unavailable.',
+      );
+    }
+
+    final results = jsonDecode(response.body) as List<dynamic>;
+    return results
+        .cast<Map<String, dynamic>>()
+        .map(_suggestionFromNominatim)
+        .whereType<LocationSuggestion>()
+        .toList();
   }
 
   Future<DeviceLocation> searchLocation(String query) async {
@@ -68,7 +135,7 @@ class DeviceLocationService {
         latitude: result.latitude,
         longitude: result.longitude,
       );
-      await _saveLocation(location);
+      await saveLocation(location);
       return location;
     } on LocationAccessException {
       rethrow;
@@ -134,7 +201,48 @@ class DeviceLocationService {
       latitude: position.latitude,
       longitude: position.longitude,
     );
-    await _saveLocation(location);
+    await saveLocation(location);
     return location;
+  }
+
+  LocationSuggestion? _suggestionFromNominatim(Map<String, dynamic> json) {
+    final latitude = double.tryParse(json['lat'] as String? ?? '');
+    final longitude = double.tryParse(json['lon'] as String? ?? '');
+    if (latitude == null || longitude == null) return null;
+
+    final displayName = (json['display_name'] as String? ?? '').trim();
+    final address = json['address'] as Map<String, dynamic>? ?? const {};
+    final title = _firstNonEmpty([
+      address['road'],
+      address['neighbourhood'],
+      address['suburb'],
+      address['village'],
+      address['town'],
+      address['city'],
+      json['name'],
+      displayName.split(',').first,
+    ]);
+    final subtitle = _firstNonEmpty([
+      address['city'],
+      address['town'],
+      address['municipality'],
+      address['state'],
+      displayName,
+    ]);
+
+    return LocationSuggestion(
+      title: title,
+      subtitle: subtitle == title ? displayName : subtitle,
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
+
+  String _firstNonEmpty(List<dynamic> values) {
+    for (final value in values) {
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+    }
+    return 'Selected location';
   }
 }
