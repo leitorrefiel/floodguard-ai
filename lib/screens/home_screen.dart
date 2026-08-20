@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/device_location_service.dart';
 import '../services/risk_service.dart';
+import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
 import '../widgets/metric_tile.dart';
@@ -22,9 +23,14 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _locationService = DeviceLocationService();
+  final _weatherService = WeatherService();
+  final _riskService = const RiskService();
   String _locationLabel = 'Tap to set your location';
   String? _coordinates;
+  RiskAssessment? _riskAssessment;
+  String? _riskError;
   bool _isLoadingLocation = false;
+  bool _isLoadingRisk = false;
 
   @override
   void initState() {
@@ -40,11 +46,12 @@ class _HomeScreenState extends State<HomeScreen> {
       _coordinates =
           '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
     });
+    _loadRiskFor(location);
   }
 
   @override
   Widget build(BuildContext context) {
-    const risk = RiskService();
+    final risk = _riskAssessment;
     return Scaffold(
       bottomNavigationBar: const AppBottomNav(index: 0),
       body: SafeArea(
@@ -104,7 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               child: Card(
-                color: const Color(0xFFF0F6FF),
+                color: _riskCardColor(risk?.level),
                 child: Padding(
                   padding: const EdgeInsets.all(18),
                   child: Column(
@@ -118,44 +125,54 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        risk.currentRisk,
-                        style: const TextStyle(
-                          fontSize: 25,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFFF59E0B),
+                      if (_isLoadingRisk)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: LinearProgressIndicator(minHeight: 6),
+                        )
+                      else
+                        Text(
+                          risk?.level ?? 'Set Location First',
+                          style: TextStyle(
+                            fontSize: 25,
+                            fontWeight: FontWeight.w800,
+                            color: _riskColor(risk?.level),
+                          ),
                         ),
-                      ),
-                      const Text(
-                        'Conditions could lead to flooding. Stay alert and monitor updates.',
+                      Text(
+                        _riskError ??
+                            risk?.summary ??
+                            'Choose your location to load live rainfall-based flood risk.',
                       ),
                       const SizedBox(height: 14),
-                      const LinearProgressIndicator(
-                        value: .58,
+                      LinearProgressIndicator(
+                        value: (risk?.score ?? 0) / 100,
                         minHeight: 8,
-                        borderRadius: BorderRadius.all(Radius.circular(6)),
-                        color: Color(0xFFF59E0B),
+                        borderRadius: const BorderRadius.all(
+                          Radius.circular(6),
+                        ),
+                        color: _riskColor(risk?.level),
                       ),
                       const SizedBox(height: 16),
-                      const Row(
+                      Row(
                         children: [
                           MetricTile(
                             icon: Icons.cloudy_snowing,
-                            label: 'Rainfall (24h)',
-                            value: '36 mm',
-                            caption: 'Moderate',
+                            label: 'Rain now',
+                            value: risk?.currentRainLabel ?? '--',
+                            caption: 'Live',
                           ),
                           MetricTile(
                             icon: Icons.cloud,
                             label: 'Weather',
-                            value: '26 C',
-                            caption: 'Light Rain',
+                            value: risk?.temperatureLabel ?? '--',
+                            caption: 'Open-Meteo',
                           ),
                           MetricTile(
                             icon: Icons.water,
-                            label: 'Water level',
-                            value: '1.2 m',
-                            caption: 'Rising',
+                            label: 'Forecast rain',
+                            value: risk?.forecastRainLabel ?? '--',
+                            caption: 'Max daily',
                           ),
                         ],
                       ),
@@ -169,11 +186,12 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListTile(
                 leading: Icon(
                   Icons.warning_amber_rounded,
-                  color: Color(0xFFF59E0B),
+                  color: _riskColor(risk?.level),
                 ),
-                title: Text('Flood Watch'),
+                title: Text(risk == null ? 'Flood Watch' : '${risk.level} Watch'),
                 subtitle: Text(
-                  'Moderate to heavy rainfall expected within the next 24 hours.',
+                  risk?.summary ??
+                      'Set your location to load live rainfall advisories.',
                 ),
                 onTap: () => Navigator.push(
                   context,
@@ -310,6 +328,46 @@ class _HomeScreenState extends State<HomeScreen> {
       _coordinates =
           '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
     });
+    _loadRiskFor(location);
+  }
+
+  Future<void> _loadRiskFor(DeviceLocation location) async {
+    setState(() {
+      _isLoadingRisk = true;
+      _riskError = null;
+    });
+    try {
+      final forecast = await _weatherService.getForecast(
+        latitude: location.latitude,
+        longitude: location.longitude,
+      );
+      if (!mounted) return;
+      setState(() => _riskAssessment = _riskService.assess(forecast));
+    } on WeatherException catch (error) {
+      if (mounted) setState(() => _riskError = error.message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _riskError = 'Unable to load live flood risk right now.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingRisk = false);
+    }
+  }
+
+  Color _riskColor(String? level) {
+    if (level == 'High Risk') return const Color(0xFFDC2626);
+    if (level == 'Moderate Risk') return const Color(0xFFF59E0B);
+    if (level == 'Low Risk') return const Color(0xFF2563EB);
+    return const Color(0xFF16A34A);
+  }
+
+  Color _riskCardColor(String? level) {
+    if (level == 'High Risk') return const Color(0xFFFFF4F4);
+    if (level == 'Moderate Risk') return const Color(0xFFFFF8E6);
+    if (level == 'Low Risk') return const Color(0xFFF0F6FF);
+    return const Color(0xFFF0FDF4);
   }
 
   void _openLocationSheet() {
