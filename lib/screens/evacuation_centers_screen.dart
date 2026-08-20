@@ -16,6 +16,7 @@ class EvacuationCentersScreen extends StatefulWidget {
 }
 
 class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
+  static const _geoapifyApiKey = String.fromEnvironment('GEOAPIFY_API_KEY');
   static const _baliwag = LatLng(14.9547, 120.8969);
   static const _facilities = [
     _Facility(
@@ -57,7 +58,6 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   bool _isRefreshing = false;
   bool _showFloodHazard = true;
   bool _showFacilities = true;
-  double _overlayOpacity = .55;
 
   @override
   void initState() {
@@ -142,47 +142,16 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('FloodGuard Hazard Map')),
     bottomNavigationBar: const AppBottomNav(index: 0),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        _mapCard(),
-        const SizedBox(height: 12),
-        _mapToolsCard(),
-        const SizedBox(height: 12),
-        _hazardSummaryCard(),
-        const SizedBox(height: 12),
-        _weatherCard(),
-        const SizedBox(height: 20),
-        Text(
-          'Critical Facilities',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          'Tap a facility to center it on the map. Use these as planning references and verify availability with the LGU.',
-        ),
-        const SizedBox(height: 8),
-        ..._facilities.map(
-          (facility) => _CenterCard(
-            facility,
-            onTap: () => _focusFacility(facility),
-          ),
-        ),
-        const SizedBox(height: 10),
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.emergency_outlined, color: Colors.red),
-            title: Text('Emergency Help'),
-            subtitle: Text(
-              'Use for urgent rescue, medical, or fire emergencies. Confirm local DRRMO numbers with your LGU.',
-            ),
-          ),
-        ),
-      ],
+    body: SafeArea(
+      child: Stack(
+        children: [
+          Positioned.fill(child: _mapView()),
+          _topBar(context),
+          _mapQuickActions(),
+          _bottomPanel(context),
+        ],
+      ),
     ),
   );
 
@@ -197,56 +166,150 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     );
   }
 
-  Widget _mapCard() => ClipRRect(
-    borderRadius: BorderRadius.circular(16),
-    child: SizedBox(
-      height: 340,
-      child: FlutterMap(
-        mapController: _mapController,
-        options: MapOptions(
-          initialCenter: _mapCenter,
-          initialZoom: 13,
-          onTap: (_, point) => _moveAssessmentPoint(point),
-        ),
-        children: [
-          TileLayer(
-            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.example.floodguard',
-          ),
-          if (_showFloodHazard)
-            CircleLayer(circles: _hazardZones().map(_hazardCircle).toList()),
-          if (_showFacilities)
-            MarkerLayer(markers: _facilities.map(_facilityMarker).toList()),
-          MarkerLayer(
-            markers: [
-              Marker(
-                point: _assessmentPoint,
-                width: 54,
-                height: 54,
-                child: const Icon(
-                  Icons.location_pin,
-                  color: AppTheme.navy,
-                  size: 48,
-                ),
-              ),
-            ],
-          ),
-          const RichAttributionWidget(
-            attributions: [
-              TextSourceAttribution('OpenStreetMap contributors'),
-            ],
+  Widget _mapView() => FlutterMap(
+    mapController: _mapController,
+    options: MapOptions(
+      initialCenter: _mapCenter,
+      initialZoom: 13,
+      maxZoom: 18,
+      minZoom: 8,
+      onTap: (_, point) => _moveAssessmentPoint(point),
+    ),
+    children: [
+      TileLayer(
+        urlTemplate: _tileUrl,
+        userAgentPackageName: 'com.example.floodguard',
+      ),
+      if (_showFloodHazard)
+        CircleLayer(circles: _hazardZones().map(_hazardCircle).toList()),
+      if (_showFacilities)
+        MarkerLayer(markers: _facilities.map(_facilityMarker).toList()),
+      MarkerLayer(
+        markers: [
+          Marker(
+            point: _assessmentPoint,
+            width: 54,
+            height: 54,
+            child: const Icon(
+              Icons.location_pin,
+              color: AppTheme.navy,
+              size: 48,
+            ),
           ),
         ],
       ),
+      RichAttributionWidget(
+        attributions: [
+          TextSourceAttribution(
+            _geoapifyApiKey.isEmpty
+                ? 'OpenStreetMap contributors'
+                : 'Geoapify | OpenStreetMap contributors',
+          ),
+        ],
+      ),
+    ],
+  );
+
+  String get _tileUrl => _geoapifyApiKey.isEmpty
+      ? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+      : 'https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=$_geoapifyApiKey';
+
+  Widget _topBar(BuildContext context) => Positioned(
+    top: 12,
+    left: 16,
+    right: 16,
+    child: Row(
+      children: [
+        IconButton.filledTonal(
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Back',
+        ),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Text(
+            'Hazard Map',
+            style: TextStyle(
+              color: AppTheme.navy,
+              fontWeight: FontWeight.w800,
+              fontSize: 22,
+            ),
+          ),
+        ),
+        IconButton.filledTonal(
+          onPressed: _isRefreshing ? null : _loadWeather,
+          icon: _isRefreshing
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh),
+          tooltip: 'Refresh',
+        ),
+      ],
     ),
   );
 
-  Widget _mapToolsCard() => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _mapQuickActions() => Positioned(
+    right: 16,
+    top: 86,
+    child: Column(
+      children: [
+        IconButton.filled(
+          onPressed: _isRefreshing ? null : _useMyLocation,
+          icon: const Icon(Icons.my_location),
+          tooltip: 'Use my location',
+        ),
+        const SizedBox(height: 8),
+        IconButton.filledTonal(
+          onPressed: () => setState(() => _showFloodHazard = !_showFloodHazard),
+          icon: Icon(
+            _showFloodHazard ? Icons.flood_outlined : Icons.flood,
+          ),
+          tooltip: 'Flood zones',
+        ),
+        const SizedBox(height: 8),
+        IconButton.filledTonal(
+          onPressed: () => setState(() => _showFacilities = !_showFacilities),
+          icon: const Icon(Icons.home_work_outlined),
+          tooltip: 'Facilities',
+        ),
+      ],
+    ),
+  );
+
+  Widget _bottomPanel(BuildContext context) => DraggableScrollableSheet(
+    initialChildSize: .38,
+    minChildSize: .2,
+    maxChildSize: .78,
+    builder: (context, controller) => DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF8FBFF),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x26000000),
+            blurRadius: 16,
+            offset: Offset(0, -4),
+          ),
+        ],
+      ),
+      child: ListView(
+        controller: controller,
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
         children: [
+          Center(
+            child: Container(
+              width: 46,
+              height: 5,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD5DEEC),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               const Icon(Icons.layers_outlined, color: AppTheme.blue),
@@ -259,10 +322,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          const Text(
-            'Choose the flood scenario and map details you want to see.',
-          ),
+          const SizedBox(height: 8),
+          _hazardSummaryCard(),
           const SizedBox(height: 10),
           SegmentedButton<String>(
             segments: const [
@@ -276,31 +337,29 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
             },
           ),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilterChip(
-                avatar: const Icon(Icons.flood_outlined, size: 18),
-                label: const Text('Flood zones'),
-                selected: _showFloodHazard,
-                onSelected: (value) => setState(() => _showFloodHazard = value),
-              ),
-              FilterChip(
-                avatar: const Icon(Icons.home_work_outlined, size: 18),
-                label: const Text('Facilities'),
-                selected: _showFacilities,
-                onSelected: (value) => setState(() => _showFacilities = value),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
           const _HazardLegend(),
-          const SizedBox(height: 8),
-          const Text(
-            'Tap the map to move the assessment pin. Facility pins show evacuation support, hospitals, schools, and fire response references.',
-            style: TextStyle(fontSize: 12),
+          const SizedBox(height: 12),
+          _weatherCard(),
+          const SizedBox(height: 18),
+          Text(
+            'Critical Facilities',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
+          const SizedBox(height: 4),
+          const Text(
+            'Tap a facility to center it on the map. Verify availability with the LGU before emergency use.',
+          ),
+          const SizedBox(height: 8),
+          ..._facilities.map(
+            (facility) => _CenterCard(
+              facility,
+              onTap: () => _focusFacility(facility),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const _EmergencyHelpCard(),
         ],
       ),
     ),
@@ -308,55 +367,81 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
   Widget _hazardSummaryCard() {
     final zone = _nearestHazardZone();
-    return Card(
-      color: zone.color.withValues(alpha: .1),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: zone.color.withValues(alpha: .18),
-          child: Icon(Icons.flood_outlined, color: zone.color),
-        ),
-        title: Text('Hazard level near $_locationLabel'),
-        subtitle: Text(
-          '${zone.level} flood hazard, $_returnPeriod return period. '
-          'Use this as a planning reference only.',
-        ),
-        trailing: IconButton(
-          onPressed: _isRefreshing ? null : _useMyLocation,
-          icon: _isRefreshing
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.my_location),
-          tooltip: 'Use my live location',
-        ),
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: zone.color.withValues(alpha: .1),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: zone.color.withValues(alpha: .25)),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: zone.color.withValues(alpha: .18),
+            child: Icon(Icons.flood_outlined, color: zone.color),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${zone.level} hazard near $_locationLabel',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  '${_scenarioLabel(_returnPeriod)} scenario. Planning reference only.',
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _weatherCard() => Card(
-    color: const Color(0xFFF0F6FF),
-    child: ListTile(
-      leading: _isRefreshing
-          ? const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.cloudy_snowing, color: AppTheme.blue),
-      title: Text('Live weather near $_locationLabel'),
-      subtitle: _weather != null
-          ? Text(
-              '${_weather!.temperatureCelsius.toStringAsFixed(1)} C, '
-              'precipitation ${_weather!.precipitationMm.toStringAsFixed(1)} mm',
-            )
-          : Text(_weatherError ?? 'Loading current weather...'),
-      trailing: IconButton(
-        onPressed: _isRefreshing ? null : _loadWeather,
-        icon: const Icon(Icons.refresh),
-        tooltip: 'Refresh live weather',
-      ),
+  String _scenarioLabel(String returnPeriod) => switch (returnPeriod) {
+    '5-Year' => 'Usual flood',
+    '25-Year' => 'Heavy flood',
+    _ => 'Rare extreme flood',
+  };
+
+  Widget _weatherCard() => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFFE3EAF4)),
+    ),
+    child: Row(
+      children: [
+        _isRefreshing
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.cloudy_snowing, color: AppTheme.blue),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Live weather',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              Text(
+                _weather != null
+                    ? '${_weather!.temperatureCelsius.toStringAsFixed(1)} C, precipitation ${_weather!.precipitationMm.toStringAsFixed(1)} mm'
+                    : _weatherError ?? 'Loading current weather...',
+              ),
+            ],
+          ),
+        ),
+      ],
     ),
   );
 
@@ -364,7 +449,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     point: zone.point,
     radius: zone.radiusMeters * _returnPeriodMultiplier,
     useRadiusInMeter: true,
-    color: zone.color.withValues(alpha: _overlayOpacity),
+    color: zone.color.withValues(alpha: .36),
     borderStrokeWidth: 1.5,
     borderColor: zone.color,
   );
@@ -521,6 +606,26 @@ class _CenterCard extends StatelessWidget {
     _FacilityType.hospital => Icons.local_hospital_outlined,
     _FacilityType.fireStation => Icons.local_fire_department_outlined,
   };
+}
+
+class _EmergencyHelpCard extends StatelessWidget {
+  const _EmergencyHelpCard();
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: ListTile(
+      leading: const Icon(Icons.emergency_outlined, color: Colors.red),
+      title: const Text('Emergency Help'),
+      subtitle: const Text(
+        'For urgent rescue, medical, or fire emergencies, use your phone emergency dialer and confirm local DRRMO numbers with your LGU.',
+      ),
+      trailing: IconButton(
+        onPressed: null,
+        icon: const Icon(Icons.phone_disabled_outlined),
+        tooltip: 'Dialing is not configured',
+      ),
+    ),
+  );
 }
 
 class _HazardZone {
