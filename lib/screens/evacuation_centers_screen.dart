@@ -16,6 +16,9 @@ class EvacuationCentersScreen extends StatefulWidget {
 }
 
 class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
+  static const _mapboxAccessToken = String.fromEnvironment(
+    'MAPBOX_ACCESS_TOKEN',
+  );
   static const _geoapifyApiKey = String.fromEnvironment('GEOAPIFY_API_KEY');
   static const _baliwag = LatLng(14.9547, 120.8969);
   static const _facilities = [
@@ -201,18 +204,32 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       RichAttributionWidget(
         attributions: [
           TextSourceAttribution(
-            _geoapifyApiKey.isEmpty
-                ? 'OpenStreetMap contributors'
-                : 'Geoapify | OpenStreetMap contributors',
+            _mapAttribution,
           ),
         ],
       ),
     ],
   );
 
-  String get _tileUrl => _geoapifyApiKey.isEmpty
-      ? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-      : 'https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=$_geoapifyApiKey';
+  String get _tileUrl {
+    if (_mapboxAccessToken.isNotEmpty) {
+      return 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token=$_mapboxAccessToken';
+    }
+    if (_geoapifyApiKey.isNotEmpty) {
+      return 'https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=$_geoapifyApiKey';
+    }
+    return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  }
+
+  String get _mapAttribution {
+    if (_mapboxAccessToken.isNotEmpty) {
+      return 'Mapbox | OpenStreetMap contributors';
+    }
+    if (_geoapifyApiKey.isNotEmpty) {
+      return 'Geoapify | OpenStreetMap contributors';
+    }
+    return 'OpenStreetMap contributors';
+  }
 
   Widget _topBar(BuildContext context) => Positioned(
     top: 12,
