@@ -1,5 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/device_location_service.dart';
@@ -17,45 +19,104 @@ class EvacuationCentersScreen extends StatefulWidget {
 
 class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   static const _geoapifyApiKey = String.fromEnvironment('GEOAPIFY_API_KEY');
-  static const _baliwag = LatLng(14.9547, 120.8969);
+  static const _fallbackMapStyle = '''
+{
+  "version": 8,
+  "sources": {
+    "osm": {
+      "type": "raster",
+      "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      "tileSize": 256,
+      "attribution": "OpenStreetMap contributors"
+    }
+  },
+  "layers": [
+    {
+      "id": "osm",
+      "type": "raster",
+      "source": "osm",
+      "minzoom": 0,
+      "maxzoom": 20
+    }
+  ]
+}
+''';
+  static const _streetTileAttribution =
+      'Powered by Geoapify | OpenMapTiles | OpenStreetMap contributors';
+  static const _baliwag = ml.LatLng(14.9547, 120.8969);
   static const _facilities = [
     _Facility(
       name: 'Baliwag City Hall Evacuation Center',
       address: 'Baliwag, Bulacan',
-      point: LatLng(14.9547, 120.8969),
+      point: ml.LatLng(14.9547, 120.8969),
       type: _FacilityType.evacuation,
       recommended: true,
     ),
     _Facility(
       name: 'Baliwag North Central School',
       address: 'Baliwag, Bulacan',
-      point: LatLng(14.9636, 120.8996),
+      point: ml.LatLng(14.9636, 120.8996),
       type: _FacilityType.school,
     ),
     _Facility(
       name: 'Baliwag District Hospital',
       address: 'Baliwag, Bulacan',
-      point: LatLng(14.9506, 120.9018),
+      point: ml.LatLng(14.9506, 120.9018),
       type: _FacilityType.hospital,
     ),
     _Facility(
       name: 'Baliwag Fire Station',
       address: 'Baliwag, Bulacan',
-      point: LatLng(14.9584, 120.8912),
+      point: ml.LatLng(14.9584, 120.8912),
       type: _FacilityType.fireStation,
     ),
   ];
 
   final _locationService = DeviceLocationService();
   final _weatherService = WeatherService();
-  LatLng _assessmentPoint = _baliwag;
+  ml.MapLibreMapController? _mapController;
+  ml.LatLng _mapCenter = _baliwag;
+  ml.LatLng _assessmentPoint = _baliwag;
   String _locationLabel = 'Baliwag, Bulacan';
   String _scenario = 'rare';
   WeatherSnapshot? _weather;
   String? _weatherError;
   bool _isRefreshing = false;
   bool _showFloodHazard = true;
-  bool _showFacilities = true;
+  bool _showFacilities = false;
+  bool _styleReady = false;
+
+  String get _mapStyle {
+    if (_geoapifyApiKey.isEmpty) return _fallbackMapStyle;
+    return '''
+{
+  "version": 8,
+  "sources": {
+    "geoapify-streets": {
+      "type": "raster",
+      "tiles": [
+        "https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=$_geoapifyApiKey"
+      ],
+      "tileSize": 256,
+      "attribution": "$_streetTileAttribution",
+      "maxzoom": 20
+    }
+  },
+  "layers": [
+    {
+      "id": "geoapify-streets",
+      "type": "raster",
+      "source": "geoapify-streets",
+      "paint": {
+        "raster-opacity": 1,
+        "raster-saturation": -0.12,
+        "raster-contrast": 0.04
+      }
+    }
+  ]
+}
+''';
+  }
 
   @override
   void initState() {
@@ -66,9 +127,14 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   Future<void> _restoreSavedLocation() async {
     final location = await _locationService.getSavedLocation();
     if (location != null && mounted) {
+      final point = ml.LatLng(location.latitude, location.longitude);
       setState(() {
-        _assessmentPoint = LatLng(location.latitude, location.longitude);
+        _mapCenter = point;
+        _assessmentPoint = point;
         _locationLabel = location.label;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _moveCamera(point, zoom: 15.4);
       });
     }
     _loadWeather();
@@ -103,10 +169,14 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     try {
       final location = await _locationService.getCurrentLocation();
       if (!mounted) return;
+      final point = ml.LatLng(location.latitude, location.longitude);
       setState(() {
-        _assessmentPoint = LatLng(location.latitude, location.longitude);
+        _mapCenter = point;
+        _assessmentPoint = point;
         _locationLabel = location.label;
       });
+      await _moveCamera(point, zoom: 15.4);
+      await _refreshMapAnnotations();
       await _loadWeather();
     } on LocationAccessException catch (error) {
       if (mounted) {
@@ -119,16 +189,71 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     }
   }
 
-  void _focusFacility(_Facility facility) {
+  Future<void> _moveAssessmentPoint(ml.LatLng point) async {
+    setState(() {
+      _assessmentPoint = point;
+      _mapCenter = point;
+      _locationLabel =
+          '${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}';
+    });
+    await _moveCamera(point, zoom: 15.4);
+    await _refreshMapAnnotations();
+    await _loadWeather();
+  }
+
+  Future<void> _focusFacility(_Facility facility) async {
     setState(() {
       _showFacilities = true;
-      _assessmentPoint = facility.point;
-      _locationLabel = facility.name;
+      _mapCenter = facility.point;
     });
-    _loadWeather();
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('Showing ${facility.name}.')));
+    await _moveCamera(facility.point, zoom: 16);
+    await _refreshMapAnnotations();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Showing ${facility.name} on the map.')),
+    );
+  }
+
+  Future<void> _moveCamera(ml.LatLng point, {double? zoom}) async {
+    final controller = _mapController;
+    if (controller == null) return;
+    await controller.animateCamera(
+      ml.CameraUpdate.newLatLngZoom(point, zoom ?? 15.4),
+      duration: const Duration(milliseconds: 420),
+    );
+  }
+
+  Future<void> _refreshMapAnnotations() async {
+    final controller = _mapController;
+    if (controller == null || !_styleReady) return;
+    await controller.clearCircles();
+
+    if (_showFloodHazard) {
+      await controller.addCircles(_hazardZones().map(_hazardCircle).toList());
+    }
+    if (_showFacilities) {
+      await controller.addCircles(_facilities.map(_facilityCircle).toList());
+    }
+    await controller.addCircle(
+      ml.CircleOptions(
+        geometry: _assessmentPoint,
+        circleRadius: 11,
+        circleColor: '#103B73',
+        circleOpacity: 1,
+        circleStrokeColor: '#FFFFFF',
+        circleStrokeWidth: 4,
+      ),
+    );
+  }
+
+  void _toggleFloodZones() {
+    setState(() => _showFloodHazard = !_showFloodHazard);
+    _refreshMapAnnotations();
+  }
+
+  void _toggleFacilities() {
+    setState(() => _showFacilities = !_showFacilities);
+    _refreshMapAnnotations();
   }
 
   @override
@@ -137,7 +262,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     body: SafeArea(
       child: Stack(
         children: [
-          Positioned.fill(child: _mapPreview()),
+          Positioned.fill(child: _mapView()),
           _topBar(context),
           _mapQuickActions(),
           _bottomPanel(context),
@@ -146,46 +271,23 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     ),
   );
 
-  Widget _mapPreview() => Stack(
-    fit: StackFit.expand,
-    children: [
-      Image.network(
-        _staticMapUrl,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        errorBuilder: (_, _, _) => Container(
-          color: const Color(0xFFEAF2FA),
-          alignment: Alignment.center,
-          child: const Text('Map preview unavailable'),
-        ),
-      ),
-      if (_showFloodHazard) const _FloodZoneOverlay(),
-      const Center(
-        child: Icon(Icons.location_pin, color: AppTheme.navy, size: 48),
-      ),
-      if (_showFacilities) const _FacilityPreviewPins(),
-    ],
+  Widget _mapView() => ml.MapLibreMap(
+    initialCameraPosition: ml.CameraPosition(target: _mapCenter, zoom: 15.4),
+    styleString: _mapStyle,
+    compassEnabled: false,
+    rotateGesturesEnabled: false,
+    myLocationEnabled: false,
+    attributionButtonPosition: ml.AttributionButtonPosition.bottomLeft,
+    onMapCreated: (controller) {
+      _mapController = controller;
+    },
+    onStyleLoadedCallback: () {
+      _styleReady = true;
+      _refreshMapAnnotations();
+    },
+    onMapClick: (_, point) => _moveAssessmentPoint(point),
+    annotationOrder: const [ml.AnnotationType.circle],
   );
-
-  String get _staticMapUrl {
-    final lng = _assessmentPoint.longitude.toStringAsFixed(6);
-    final lat = _assessmentPoint.latitude.toStringAsFixed(6);
-    final marker = 'lonlat:$lng,$lat;color:%23103B73;size:medium;type:material';
-    final key = _geoapifyApiKey;
-    if (key.isEmpty) {
-      return 'https://staticmap.openstreetmap.de/staticmap.php?center=$lat,$lng&zoom=15&size=600x600&markers=$lat,$lng,blue-pushpin';
-    }
-    return 'https://maps.geoapify.com/v1/staticmap'
-        '?style=osm-bright'
-        '&width=700'
-        '&height=700'
-        '&format=png'
-        '&center=lonlat:$lng,$lat'
-        '&zoom=15.2'
-        '&marker=$marker'
-        '&scaleFactor=2'
-        '&apiKey=$key';
-  }
 
   Widget _topBar(BuildContext context) => Positioned(
     top: 12,
@@ -238,30 +340,31 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         ),
         const SizedBox(height: 8),
         _MapActionButton(
-          label: 'Flood zones',
+          label: 'Flood layer',
           icon: Icons.flood_outlined,
           selected: _showFloodHazard,
-          onPressed: () => setState(() => _showFloodHazard = !_showFloodHazard),
+          onPressed: _toggleFloodZones,
         ),
         const SizedBox(height: 8),
         _MapActionButton(
           label: 'Facilities',
           icon: Icons.home_work_outlined,
           selected: _showFacilities,
-          onPressed: () => setState(() => _showFacilities = !_showFacilities),
+          onPressed: _toggleFacilities,
         ),
       ],
     ),
   );
 
-  Widget _bottomPanel(BuildContext context) => DraggableScrollableSheet(
-    initialChildSize: .36,
-    minChildSize: .18,
-    maxChildSize: .84,
-    builder: (context, controller) => DecoratedBox(
+  Widget _bottomPanel(BuildContext context) => Positioned(
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: MediaQuery.sizeOf(context).height * .58,
+    child: DecoratedBox(
       decoration: const BoxDecoration(
         color: Color(0xFFF8FBFF),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         boxShadow: [
           BoxShadow(
             color: Color(0x26000000),
@@ -271,7 +374,6 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         ],
       ),
       child: ListView(
-        controller: controller,
         padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
         children: [
           Center(
@@ -285,6 +387,19 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          Row(
+            children: [
+              const Icon(Icons.layers_outlined, color: AppTheme.blue),
+              const SizedBox(width: 8),
+              Text(
+                'Flood Map',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           _hazardSummaryCard(),
           const SizedBox(height: 10),
           SegmentedButton<String>(
@@ -294,14 +409,16 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
               ButtonSegment(value: 'rare', label: Text('Rare')),
             ],
             selected: {_scenario},
-            onSelectionChanged: (values) =>
-                setState(() => _scenario = values.first),
+            onSelectionChanged: (values) {
+              setState(() => _scenario = values.first);
+              _refreshMapAnnotations();
+            },
           ),
           const SizedBox(height: 12),
           const _HazardLegend(),
           const SizedBox(height: 6),
           const Text(
-            'Colored rings are demo flood-prone zones. Use the buttons on the map to show or hide layers.',
+            'Colored rings show sample flood-prone zones around the selected point. Tap the map to assess another spot.',
             style: TextStyle(color: Color(0xFF5B6677), fontSize: 12),
           ),
           const SizedBox(height: 12),
@@ -317,7 +434,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Tap a facility to focus the map preview. Verify availability with the LGU before emergency use.',
+            'Tap a facility to move the map there. Verify availability with the LGU before emergency use.',
           ),
           const SizedBox(height: 8),
           ..._facilities.map(
@@ -355,7 +472,9 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-                Text('${_scenarioLabel(_scenario)} with nearby facilities.'),
+                Text(
+                  '${_scenarioLabel(_scenario)}. Streets and nearby facilities shown.',
+                ),
               ],
             ),
           ),
@@ -407,14 +526,32 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     ),
   );
 
+  ml.CircleOptions _hazardCircle(_HazardZone zone) => ml.CircleOptions(
+    geometry: zone.point,
+    circleRadius: zone.radiusPixels * _scenarioMultiplier,
+    circleColor: _hex(zone.color),
+    circleOpacity: .12,
+    circleStrokeWidth: 2,
+    circleStrokeColor: _hex(zone.color),
+    circleStrokeOpacity: .7,
+  );
+
+  ml.CircleOptions _facilityCircle(_Facility facility) => ml.CircleOptions(
+    geometry: facility.point,
+    circleRadius: facility.recommended ? 9 : 8,
+    circleColor: _facilityHexColor(facility),
+    circleOpacity: .95,
+    circleStrokeColor: '#FFFFFF',
+    circleStrokeWidth: 3,
+  );
+
   _HazardZone _nearestHazardZone() {
-    final distance = const Distance();
     final zones = _hazardZones().toList();
     zones.sort(
-      (a, b) => distance(
+      (a, b) => _distanceMeters(
         _assessmentPoint,
         a.point,
-      ).compareTo(distance(_assessmentPoint, b.point)),
+      ).compareTo(_distanceMeters(_assessmentPoint, b.point)),
     );
     return zones.first;
   }
@@ -422,118 +559,71 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   List<_HazardZone> _hazardZones() => const [
     _HazardZone(
       level: 'High',
-      point: LatLng(14.9526, 120.8912),
+      point: ml.LatLng(14.9526, 120.8912),
+      radiusPixels: 56,
       color: Color(0xFFDC2626),
     ),
     _HazardZone(
       level: 'Medium',
-      point: LatLng(14.9615, 120.9004),
+      point: ml.LatLng(14.9615, 120.9004),
+      radiusPixels: 48,
       color: Color(0xFFF59E0B),
     ),
     _HazardZone(
       level: 'Low',
-      point: LatLng(14.9468, 120.9044),
+      point: ml.LatLng(14.9468, 120.9044),
+      radiusPixels: 40,
       color: Color(0xFF22C55E),
     ),
   ];
-}
 
-class _FloodZoneOverlay extends StatelessWidget {
-  const _FloodZoneOverlay();
+  double get _scenarioMultiplier => switch (_scenario) {
+    'usual' => .72,
+    'heavy' => .9,
+    _ => 1.12,
+  };
 
-  @override
-  Widget build(BuildContext context) => IgnorePointer(
-    child: Center(
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          _ZoneRing(size: 188, color: const Color(0xFFDC2626), opacity: .12),
-          _ZoneRing(size: 148, color: const Color(0xFFF59E0B), opacity: .16),
-          _ZoneRing(size: 108, color: const Color(0xFF22C55E), opacity: .14),
-        ],
-      ),
-    ),
-  );
-}
+  String _facilityHexColor(_Facility facility) {
+    if (facility.recommended) return '#16A34A';
+    return switch (facility.type) {
+      _FacilityType.hospital => '#DC2626',
+      _FacilityType.fireStation => '#F97316',
+      _ => '#2563EB',
+    };
+  }
 
-class _ZoneRing extends StatelessWidget {
-  const _ZoneRing({
-    required this.size,
-    required this.color,
-    required this.opacity,
-  });
+  double _distanceMeters(ml.LatLng a, ml.LatLng b) {
+    const earthRadiusMeters = 6371000.0;
+    final lat1 = _radians(a.latitude);
+    final lat2 = _radians(b.latitude);
+    final deltaLat = _radians(b.latitude - a.latitude);
+    final deltaLng = _radians(b.longitude - a.longitude);
+    final h =
+        math.sin(deltaLat / 2) * math.sin(deltaLat / 2) +
+        math.cos(lat1) *
+            math.cos(lat2) *
+            math.sin(deltaLng / 2) *
+            math.sin(deltaLng / 2);
+    return earthRadiusMeters * 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
+  }
 
-  final double size;
-  final Color color;
-  final double opacity;
+  double _radians(double degrees) => degrees * math.pi / 180;
 
-  @override
-  Widget build(BuildContext context) => Container(
-    width: size,
-    height: size,
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      color: color.withValues(alpha: opacity),
-      border: Border.all(color: color.withValues(alpha: .75), width: 2),
-    ),
-  );
-}
-
-class _FacilityPreviewPins extends StatelessWidget {
-  const _FacilityPreviewPins();
-
-  @override
-  Widget build(BuildContext context) => const IgnorePointer(
-    child: Stack(
-      children: [
-        Positioned(left: 42, top: 218, child: _PreviewPin(Icons.home_work)),
-        Positioned(right: 76, top: 184, child: _PreviewPin(Icons.school)),
-        Positioned(
-          left: 88,
-          top: 132,
-          child: _PreviewPin(Icons.local_hospital),
-        ),
-        Positioned(
-          right: 44,
-          top: 250,
-          child: _PreviewPin(Icons.local_fire_department),
-        ),
-      ],
-    ),
-  );
-}
-
-class _PreviewPin extends StatelessWidget {
-  const _PreviewPin(this.icon);
-
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: Colors.white,
-      shape: BoxShape.circle,
-      boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 8)],
-      border: Border.all(color: AppTheme.blue, width: 2),
-    ),
-    child: Padding(
-      padding: const EdgeInsets.all(7),
-      child: Icon(icon, color: AppTheme.blue, size: 18),
-    ),
-  );
+  String _hex(Color color) =>
+      '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
 }
 
 class _HazardLegend extends StatelessWidget {
   const _HazardLegend();
 
   @override
-  Widget build(BuildContext context) => const Wrap(
-    spacing: 12,
-    runSpacing: 6,
+  Widget build(BuildContext context) => const Row(
     children: [
-      _LegendItem(color: Color(0xFF22C55E), label: 'Low risk'),
-      _LegendItem(color: Color(0xFFF59E0B), label: 'Medium risk'),
-      _LegendItem(color: Color(0xFFDC2626), label: 'High risk'),
+      _LegendItem(color: Color(0xFF22C55E), label: 'Low'),
+      SizedBox(width: 12),
+      _LegendItem(color: Color(0xFFF59E0B), label: 'Medium'),
+      SizedBox(width: 12),
+      _LegendItem(color: Color(0xFFDC2626), label: 'High'),
     ],
   );
 }
@@ -702,7 +792,7 @@ class _EmergencyHelpCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Tap Call to open the phone dialer.',
+            'Tap a number to open the phone dialer. Confirm local DRRMO numbers with your LGU.',
             style: TextStyle(color: Color(0xFF5B6677)),
           ),
           const SizedBox(height: 8),
@@ -749,11 +839,13 @@ class _HazardZone {
   const _HazardZone({
     required this.level,
     required this.point,
+    required this.radiusPixels,
     required this.color,
   });
 
   final String level;
-  final LatLng point;
+  final ml.LatLng point;
+  final double radiusPixels;
   final Color color;
 }
 
@@ -768,7 +860,7 @@ class _Facility {
 
   final String name;
   final String address;
-  final LatLng point;
+  final ml.LatLng point;
   final _FacilityType type;
   final bool recommended;
 }
