@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/device_location_service.dart';
 import '../services/weather_service.dart';
@@ -329,23 +330,27 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     right: 16,
     top: 88,
     child: Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        IconButton.filled(
+        _MapActionButton(
+          label: 'My location',
+          icon: Icons.my_location,
+          selected: true,
           onPressed: _isRefreshing ? null : _useMyLocation,
-          icon: const Icon(Icons.my_location),
-          tooltip: 'Use my location',
         ),
         const SizedBox(height: 8),
-        IconButton.filledTonal(
+        _MapActionButton(
+          label: 'Flood layer',
+          icon: Icons.flood_outlined,
+          selected: _showFloodHazard,
           onPressed: _toggleFloodZones,
-          icon: Icon(_showFloodHazard ? Icons.flood_outlined : Icons.flood),
-          tooltip: 'Flood zones',
         ),
         const SizedBox(height: 8),
-        IconButton.filledTonal(
+        _MapActionButton(
+          label: 'Facilities',
+          icon: Icons.home_work_outlined,
+          selected: _showFacilities,
           onPressed: _toggleFacilities,
-          icon: const Icon(Icons.home_work_outlined),
-          tooltip: 'Facilities',
         ),
       ],
     ),
@@ -411,6 +416,11 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           ),
           const SizedBox(height: 12),
           const _HazardLegend(),
+          const SizedBox(height: 6),
+          const Text(
+            'Colored rings show sample flood-prone zones around the selected point. Tap the map to assess another spot.',
+            style: TextStyle(color: Color(0xFF5B6677), fontSize: 12),
+          ),
           const SizedBox(height: 12),
           _weatherCard(),
           const SizedBox(height: 18),
@@ -639,6 +649,54 @@ class _LegendItem extends StatelessWidget {
   );
 }
 
+class _MapActionButton extends StatelessWidget {
+  const _MapActionButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: selected ? AppTheme.blue : Colors.white,
+    elevation: 3,
+    shadowColor: const Color(0x30000000),
+    borderRadius: BorderRadius.circular(22),
+    child: InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(22),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: selected ? Colors.white : AppTheme.navy,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : AppTheme.navy,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _CenterCard extends StatelessWidget {
   const _CenterCard(this.facility, {required this.onTap});
 
@@ -686,21 +744,95 @@ class _CenterCard extends StatelessWidget {
 class _EmergencyHelpCard extends StatelessWidget {
   const _EmergencyHelpCard();
 
+  static const _numbers = [
+    _EmergencyNumber(
+      label: 'National Emergency Hotline',
+      number: '911',
+      detail: 'Police, fire, rescue, or medical emergency',
+    ),
+    _EmergencyNumber(
+      label: 'Philippine Red Cross',
+      number: '143',
+      detail: 'Rescue and disaster assistance',
+    ),
+    _EmergencyNumber(
+      label: 'NDRRMC Operations Center',
+      number: '0289111406',
+      displayNumber: '(02) 8911-1406',
+      detail: 'Disaster response coordination',
+    ),
+  ];
+
+  static Future<void> _call(BuildContext context, String number) async {
+    final uri = Uri(scheme: 'tel', path: number);
+    final launched = await launchUrl(uri);
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Phone dialer is not available.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Card(
-    child: ListTile(
-      leading: const Icon(Icons.emergency_outlined, color: Colors.red),
-      title: const Text('Emergency Help'),
-      subtitle: const Text(
-        'For urgent rescue, medical, or fire emergencies, use your phone emergency dialer and confirm local DRRMO numbers with your LGU.',
-      ),
-      trailing: IconButton(
-        onPressed: null,
-        icon: const Icon(Icons.phone_disabled_outlined),
-        tooltip: 'Dialing is not configured',
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.emergency_outlined, color: Colors.red),
+              SizedBox(width: 8),
+              Text(
+                'Emergency Contacts',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Tap a number to open the phone dialer. Confirm local DRRMO numbers with your LGU.',
+            style: TextStyle(color: Color(0xFF5B6677)),
+          ),
+          const SizedBox(height: 8),
+          ..._numbers.map(
+            (item) => ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFFFFE8E8),
+                child: Icon(Icons.phone_in_talk_outlined, color: Colors.red),
+              ),
+              title: Text(
+                item.label,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text('${item.displayNumber}\n${item.detail}'),
+              isThreeLine: true,
+              trailing: FilledButton(
+                onPressed: () => _call(context, item.number),
+                child: const Text('Call'),
+              ),
+            ),
+          ),
+        ],
       ),
     ),
   );
+}
+
+class _EmergencyNumber {
+  const _EmergencyNumber({
+    required this.label,
+    required this.number,
+    required this.detail,
+    String? displayNumber,
+  }) : displayNumber = displayNumber ?? number;
+
+  final String label;
+  final String number;
+  final String displayNumber;
+  final String detail;
 }
 
 class _HazardZone {
