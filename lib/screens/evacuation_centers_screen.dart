@@ -1,6 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
 import '../services/device_location_service.dart';
 import '../services/weather_service.dart';
@@ -16,51 +17,49 @@ class EvacuationCentersScreen extends StatefulWidget {
 }
 
 class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
-  static const _mapboxAccessToken = String.fromEnvironment(
-    'MAPBOX_ACCESS_TOKEN',
-  );
-  static const _geoapifyApiKey = String.fromEnvironment('GEOAPIFY_API_KEY');
-  static const _baliwag = LatLng(14.9547, 120.8969);
+  static const _mapStyle = 'https://demotiles.maplibre.org/style.json';
+  static const _baliwag = ml.LatLng(14.9547, 120.8969);
   static const _facilities = [
     _Facility(
       name: 'Baliwag City Hall Evacuation Center',
       address: 'Baliwag, Bulacan',
-      point: LatLng(14.9547, 120.8969),
+      point: ml.LatLng(14.9547, 120.8969),
       type: _FacilityType.evacuation,
       recommended: true,
     ),
     _Facility(
       name: 'Baliwag North Central School',
       address: 'Baliwag, Bulacan',
-      point: LatLng(14.9636, 120.8996),
+      point: ml.LatLng(14.9636, 120.8996),
       type: _FacilityType.school,
     ),
     _Facility(
       name: 'Baliwag District Hospital',
       address: 'Baliwag, Bulacan',
-      point: LatLng(14.9506, 120.9018),
+      point: ml.LatLng(14.9506, 120.9018),
       type: _FacilityType.hospital,
     ),
     _Facility(
       name: 'Baliwag Fire Station',
       address: 'Baliwag, Bulacan',
-      point: LatLng(14.9584, 120.8912),
+      point: ml.LatLng(14.9584, 120.8912),
       type: _FacilityType.fireStation,
     ),
   ];
 
-  final _mapController = MapController();
   final _locationService = DeviceLocationService();
   final _weatherService = WeatherService();
-  LatLng _mapCenter = _baliwag;
-  LatLng _assessmentPoint = _baliwag;
+  ml.MapLibreMapController? _mapController;
+  ml.LatLng _mapCenter = _baliwag;
+  ml.LatLng _assessmentPoint = _baliwag;
   String _locationLabel = 'Baliwag, Bulacan';
-  String _returnPeriod = '100-Year';
+  String _scenario = 'rare';
   WeatherSnapshot? _weather;
   String? _weatherError;
   bool _isRefreshing = false;
   bool _showFloodHazard = true;
   bool _showFacilities = true;
+  bool _styleReady = false;
 
   @override
   void initState() {
@@ -71,14 +70,14 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   Future<void> _restoreSavedLocation() async {
     final location = await _locationService.getSavedLocation();
     if (location != null && mounted) {
-      final point = LatLng(location.latitude, location.longitude);
+      final point = ml.LatLng(location.latitude, location.longitude);
       setState(() {
         _mapCenter = point;
         _assessmentPoint = point;
         _locationLabel = location.label;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _mapController.move(point, 14);
+        if (mounted) _moveCamera(point, zoom: 14);
       });
     }
     _loadWeather();
@@ -113,13 +112,14 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     try {
       final location = await _locationService.getCurrentLocation();
       if (!mounted) return;
-      final point = LatLng(location.latitude, location.longitude);
+      final point = ml.LatLng(location.latitude, location.longitude);
       setState(() {
         _mapCenter = point;
         _assessmentPoint = point;
         _locationLabel = location.label;
       });
-      _mapController.move(point, 14);
+      await _moveCamera(point, zoom: 14);
+      await _refreshMapAnnotations();
       await _loadWeather();
     } on LocationAccessException catch (error) {
       if (mounted) {
@@ -132,15 +132,75 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     }
   }
 
-  void _moveAssessmentPoint(LatLng point) {
+  Future<void> _moveAssessmentPoint(ml.LatLng point) async {
     setState(() {
       _assessmentPoint = point;
       _mapCenter = point;
       _locationLabel =
           '${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}';
     });
-    _mapController.move(point, _mapController.camera.zoom);
-    _loadWeather();
+    await _moveCamera(point);
+    await _refreshMapAnnotations();
+    await _loadWeather();
+  }
+
+  Future<void> _focusFacility(_Facility facility) async {
+    setState(() {
+      _showFacilities = true;
+      _mapCenter = facility.point;
+    });
+    await _moveCamera(facility.point, zoom: 16);
+    await _refreshMapAnnotations();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Showing ${facility.name} on the map.')),
+    );
+  }
+
+  Future<void> _moveCamera(ml.LatLng point, {double? zoom}) async {
+    final controller = _mapController;
+    if (controller == null) return;
+    await controller.animateCamera(
+      ml.CameraUpdate.newLatLngZoom(point, zoom ?? 14),
+      duration: const Duration(milliseconds: 420),
+    );
+  }
+
+  Future<void> _refreshMapAnnotations() async {
+    final controller = _mapController;
+    if (controller == null || !_styleReady) return;
+    await controller.clearCircles();
+
+    if (_showFloodHazard) {
+      await controller.addCircles(
+        _hazardZones().map(_hazardCircle).toList(),
+      );
+    }
+    if (_showFacilities) {
+      await controller.addCircles(
+        _facilities.map(_facilityCircle).toList(),
+      );
+    }
+    await controller.addCircle(
+      ml.CircleOptions(
+        geometry: _assessmentPoint,
+        circleRadius: 11,
+        circleColor: '#103B73',
+        circleOpacity: 1,
+        circleStrokeColor: '#FFFFFF',
+        circleStrokeWidth: 4,
+      ),
+    );
+  }
+
+  void _toggleFloodZones() {
+    setState(() => _showFloodHazard = !_showFloodHazard);
+    _refreshMapAnnotations();
+  }
+
+  void _toggleFacilities() {
+    setState(() => _showFacilities = !_showFacilities);
+    _refreshMapAnnotations();
   }
 
   @override
@@ -158,78 +218,23 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     ),
   );
 
-  void _focusFacility(_Facility facility) {
-    setState(() {
-      _showFacilities = true;
-      _mapCenter = facility.point;
-    });
-    _mapController.move(facility.point, 16);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Showing ${facility.name} on the map.')),
-    );
-  }
-
-  Widget _mapView() => FlutterMap(
-    mapController: _mapController,
-    options: MapOptions(
-      initialCenter: _mapCenter,
-      initialZoom: 13,
-      maxZoom: 18,
-      minZoom: 8,
-      onTap: (_, point) => _moveAssessmentPoint(point),
-    ),
-    children: [
-      TileLayer(
-        urlTemplate: _tileUrl,
-        userAgentPackageName: 'com.example.floodguard',
-      ),
-      if (_showFloodHazard)
-        CircleLayer(circles: _hazardZones().map(_hazardCircle).toList()),
-      if (_showFacilities)
-        MarkerLayer(markers: _facilities.map(_facilityMarker).toList()),
-      MarkerLayer(
-        markers: [
-          Marker(
-            point: _assessmentPoint,
-            width: 54,
-            height: 54,
-            child: const Icon(
-              Icons.location_pin,
-              color: AppTheme.navy,
-              size: 48,
-            ),
-          ),
-        ],
-      ),
-      RichAttributionWidget(
-        attributions: [
-          TextSourceAttribution(
-            _mapAttribution,
-          ),
-        ],
-      ),
-    ],
+  Widget _mapView() => ml.MapLibreMap(
+    initialCameraPosition: ml.CameraPosition(target: _mapCenter, zoom: 13),
+    styleString: _mapStyle,
+    compassEnabled: false,
+    rotateGesturesEnabled: false,
+    myLocationEnabled: false,
+    attributionButtonPosition: ml.AttributionButtonPosition.bottomLeft,
+    onMapCreated: (controller) {
+      _mapController = controller;
+    },
+    onStyleLoadedCallback: () {
+      _styleReady = true;
+      _refreshMapAnnotations();
+    },
+    onMapClick: (_, point) => _moveAssessmentPoint(point),
+    annotationOrder: const [ml.AnnotationType.circle],
   );
-
-  String get _tileUrl {
-    if (_mapboxAccessToken.isNotEmpty) {
-      return 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token=$_mapboxAccessToken';
-    }
-    if (_geoapifyApiKey.isNotEmpty) {
-      return 'https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=$_geoapifyApiKey';
-    }
-    return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-  }
-
-  String get _mapAttribution {
-    if (_mapboxAccessToken.isNotEmpty) {
-      return 'Mapbox | OpenStreetMap contributors';
-    }
-    if (_geoapifyApiKey.isNotEmpty) {
-      return 'Geoapify | OpenStreetMap contributors';
-    }
-    return 'OpenStreetMap contributors';
-  }
 
   Widget _topBar(BuildContext context) => Positioned(
     top: 12,
@@ -280,7 +285,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         ),
         const SizedBox(height: 8),
         IconButton.filledTonal(
-          onPressed: () => setState(() => _showFloodHazard = !_showFloodHazard),
+          onPressed: _toggleFloodZones,
           icon: Icon(
             _showFloodHazard ? Icons.flood_outlined : Icons.flood,
           ),
@@ -288,7 +293,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         ),
         const SizedBox(height: 8),
         IconButton.filledTonal(
-          onPressed: () => setState(() => _showFacilities = !_showFacilities),
+          onPressed: _toggleFacilities,
           icon: const Icon(Icons.home_work_outlined),
           tooltip: 'Facilities',
         ),
@@ -344,13 +349,14 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           const SizedBox(height: 10),
           SegmentedButton<String>(
             segments: const [
-              ButtonSegment(value: '5-Year', label: Text('Usual')),
-              ButtonSegment(value: '25-Year', label: Text('Heavy')),
-              ButtonSegment(value: '100-Year', label: Text('Rare')),
+              ButtonSegment(value: 'usual', label: Text('Usual')),
+              ButtonSegment(value: 'heavy', label: Text('Heavy')),
+              ButtonSegment(value: 'rare', label: Text('Rare')),
             ],
-            selected: {_returnPeriod},
+            selected: {_scenario},
             onSelectionChanged: (values) {
-              setState(() => _returnPeriod = values.first);
+              setState(() => _scenario = values.first);
+              _refreshMapAnnotations();
             },
           ),
           const SizedBox(height: 12),
@@ -366,7 +372,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Tap a facility to center it on the map. Verify availability with the LGU before emergency use.',
+            'Tap a facility to move the map there. Verify availability with the LGU before emergency use.',
           ),
           const SizedBox(height: 8),
           ..._facilities.map(
@@ -408,9 +414,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-                Text(
-                  '${_scenarioLabel(_returnPeriod)} scenario. Planning reference only.',
-                ),
+                Text('${_scenarioLabel(_scenario)}. Planning reference only.'),
               ],
             ),
           ),
@@ -419,10 +423,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     );
   }
 
-  String _scenarioLabel(String returnPeriod) => switch (returnPeriod) {
-    '5-Year' => 'Usual flood',
-    '25-Year' => 'Heavy flood',
-    _ => 'Rare extreme flood',
+  String _scenarioLabel(String scenario) => switch (scenario) {
+    'usual' => 'Usual flood scenario',
+    'heavy' => 'Heavy flood scenario',
+    _ => 'Rare extreme flood scenario',
   };
 
   Widget _weatherCard() => Container(
@@ -462,40 +466,30 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     ),
   );
 
-  CircleMarker _hazardCircle(_HazardZone zone) => CircleMarker(
-    point: zone.point,
-    radius: zone.radiusMeters * _returnPeriodMultiplier,
-    useRadiusInMeter: true,
-    color: zone.color.withValues(alpha: .36),
-    borderStrokeWidth: 1.5,
-    borderColor: zone.color,
+  ml.CircleOptions _hazardCircle(_HazardZone zone) => ml.CircleOptions(
+    geometry: zone.point,
+    circleRadius: zone.radiusPixels * _scenarioMultiplier,
+    circleColor: _hex(zone.color),
+    circleOpacity: .24,
+    circleStrokeWidth: 2,
+    circleStrokeColor: _hex(zone.color),
+    circleStrokeOpacity: .72,
   );
 
-  Marker _facilityMarker(_Facility facility) => Marker(
-    point: facility.point,
-    width: 44,
-    height: 44,
-    child: Tooltip(
-      message: facility.name,
-      child: GestureDetector(
-        onTap: () => _focusFacility(facility),
-        child: CircleAvatar(
-          backgroundColor: Colors.white,
-          child: Icon(
-            _facilityIcon(facility.type),
-            color: _facilityColor(facility),
-          ),
-        ),
-      ),
-    ),
+  ml.CircleOptions _facilityCircle(_Facility facility) => ml.CircleOptions(
+    geometry: facility.point,
+    circleRadius: facility.recommended ? 9 : 8,
+    circleColor: _facilityHexColor(facility),
+    circleOpacity: .95,
+    circleStrokeColor: '#FFFFFF',
+    circleStrokeWidth: 3,
   );
 
   _HazardZone _nearestHazardZone() {
-    final distance = const Distance();
     final zones = _hazardZones().toList();
     zones.sort(
-      (a, b) => distance(_assessmentPoint, a.point).compareTo(
-        distance(_assessmentPoint, b.point),
+      (a, b) => _distanceMeters(_assessmentPoint, a.point).compareTo(
+        _distanceMeters(_assessmentPoint, b.point),
       ),
     );
     return zones.first;
@@ -504,45 +498,58 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   List<_HazardZone> _hazardZones() => const [
     _HazardZone(
       level: 'High',
-      point: LatLng(14.9526, 120.8912),
-      radiusMeters: 900,
+      point: ml.LatLng(14.9526, 120.8912),
+      radiusPixels: 82,
       color: Color(0xFFDC2626),
     ),
     _HazardZone(
       level: 'Medium',
-      point: LatLng(14.9615, 120.9004),
-      radiusMeters: 760,
+      point: ml.LatLng(14.9615, 120.9004),
+      radiusPixels: 72,
       color: Color(0xFFF59E0B),
     ),
     _HazardZone(
       level: 'Low',
-      point: LatLng(14.9468, 120.9044),
-      radiusMeters: 640,
+      point: ml.LatLng(14.9468, 120.9044),
+      radiusPixels: 62,
       color: Color(0xFF22C55E),
     ),
   ];
 
-  double get _returnPeriodMultiplier => switch (_returnPeriod) {
-    '5-Year' => .72,
-    '25-Year' => .9,
+  double get _scenarioMultiplier => switch (_scenario) {
+    'usual' => .72,
+    'heavy' => .9,
     _ => 1.12,
   };
 
-  IconData _facilityIcon(_FacilityType type) => switch (type) {
-    _FacilityType.evacuation => Icons.home_work_outlined,
-    _FacilityType.school => Icons.school_outlined,
-    _FacilityType.hospital => Icons.local_hospital_outlined,
-    _FacilityType.fireStation => Icons.local_fire_department_outlined,
-  };
-
-  Color _facilityColor(_Facility facility) {
-    if (facility.recommended) return Colors.green;
+  String _facilityHexColor(_Facility facility) {
+    if (facility.recommended) return '#16A34A';
     return switch (facility.type) {
-      _FacilityType.hospital => Colors.red,
-      _FacilityType.fireStation => Colors.deepOrange,
-      _ => AppTheme.blue,
+      _FacilityType.hospital => '#DC2626',
+      _FacilityType.fireStation => '#F97316',
+      _ => '#2563EB',
     };
   }
+
+  double _distanceMeters(ml.LatLng a, ml.LatLng b) {
+    const earthRadiusMeters = 6371000.0;
+    final lat1 = _radians(a.latitude);
+    final lat2 = _radians(b.latitude);
+    final deltaLat = _radians(b.latitude - a.latitude);
+    final deltaLng = _radians(b.longitude - a.longitude);
+    final h =
+        math.sin(deltaLat / 2) * math.sin(deltaLat / 2) +
+        math.cos(lat1) *
+            math.cos(lat2) *
+            math.sin(deltaLng / 2) *
+            math.sin(deltaLng / 2);
+    return earthRadiusMeters * 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
+  }
+
+  double _radians(double degrees) => degrees * math.pi / 180;
+
+  String _hex(Color color) =>
+      '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
 }
 
 class _HazardLegend extends StatelessWidget {
@@ -649,13 +656,13 @@ class _HazardZone {
   const _HazardZone({
     required this.level,
     required this.point,
-    required this.radiusMeters,
+    required this.radiusPixels,
     required this.color,
   });
 
   final String level;
-  final LatLng point;
-  final double radiusMeters;
+  final ml.LatLng point;
+  final double radiusPixels;
   final Color color;
 }
 
@@ -670,7 +677,7 @@ class _Facility {
 
   final String name;
   final String address;
-  final LatLng point;
+  final ml.LatLng point;
   final _FacilityType type;
   final bool recommended;
 }
