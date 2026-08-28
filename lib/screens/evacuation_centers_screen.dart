@@ -40,6 +40,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   ]
 }
 ''';
+  static const _streetTileAttribution =
+      'Powered by Geoapify | OpenMapTiles | OpenStreetMap contributors';
   static const _baliwag = ml.LatLng(14.9547, 120.8969);
   static const _facilities = [
     _Facility(
@@ -83,9 +85,37 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   bool _showFacilities = true;
   bool _styleReady = false;
 
-  String get _mapStyle => _geoapifyApiKey.isNotEmpty
-      ? 'https://maps.geoapify.com/v1/styles/osm-bright-smooth/style.json?apiKey=$_geoapifyApiKey'
-      : _fallbackMapStyle;
+  String get _mapStyle {
+    if (_geoapifyApiKey.isEmpty) return _fallbackMapStyle;
+    return '''
+{
+  "version": 8,
+  "sources": {
+    "geoapify-streets": {
+      "type": "raster",
+      "tiles": [
+        "https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=$_geoapifyApiKey"
+      ],
+      "tileSize": 256,
+      "attribution": "$_streetTileAttribution",
+      "maxzoom": 20
+    }
+  },
+  "layers": [
+    {
+      "id": "geoapify-streets",
+      "type": "raster",
+      "source": "geoapify-streets",
+      "paint": {
+        "raster-opacity": 1,
+        "raster-saturation": -0.12,
+        "raster-contrast": 0.04
+      }
+    }
+  ]
+}
+''';
+  }
 
   @override
   void initState() {
@@ -103,7 +133,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         _locationLabel = location.label;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _moveCamera(point, zoom: 14);
+        if (mounted) _moveCamera(point, zoom: 15.4);
       });
     }
     _loadWeather();
@@ -144,7 +174,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         _assessmentPoint = point;
         _locationLabel = location.label;
       });
-      await _moveCamera(point, zoom: 14);
+      await _moveCamera(point, zoom: 15.4);
       await _refreshMapAnnotations();
       await _loadWeather();
     } on LocationAccessException catch (error) {
@@ -165,7 +195,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       _locationLabel =
           '${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}';
     });
-    await _moveCamera(point);
+    await _moveCamera(point, zoom: 15.4);
     await _refreshMapAnnotations();
     await _loadWeather();
   }
@@ -187,7 +217,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     final controller = _mapController;
     if (controller == null) return;
     await controller.animateCamera(
-      ml.CameraUpdate.newLatLngZoom(point, zoom ?? 14),
+      ml.CameraUpdate.newLatLngZoom(point, zoom ?? 15.4),
       duration: const Duration(milliseconds: 420),
     );
   }
@@ -241,7 +271,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   );
 
   Widget _mapView() => ml.MapLibreMap(
-    initialCameraPosition: ml.CameraPosition(target: _mapCenter, zoom: 14.2),
+    initialCameraPosition: ml.CameraPosition(target: _mapCenter, zoom: 15.4),
     styleString: _mapStyle,
     compassEnabled: false,
     rotateGesturesEnabled: false,
@@ -357,7 +387,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
               const Icon(Icons.layers_outlined, color: AppTheme.blue),
               const SizedBox(width: 8),
               Text(
-                'Map View',
+                'Flood Map',
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
@@ -432,7 +462,9 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-                Text('${_scenarioLabel(_scenario)}. Planning reference only.'),
+                Text(
+                  '${_scenarioLabel(_scenario)}. Streets and nearby facilities shown.',
+                ),
               ],
             ),
           ),
@@ -488,10 +520,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     geometry: zone.point,
     circleRadius: zone.radiusPixels * _scenarioMultiplier,
     circleColor: _hex(zone.color),
-    circleOpacity: .16,
-    circleStrokeWidth: 1.5,
+    circleOpacity: .12,
+    circleStrokeWidth: 2,
     circleStrokeColor: _hex(zone.color),
-    circleStrokeOpacity: .64,
+    circleStrokeOpacity: .7,
   );
 
   ml.CircleOptions _facilityCircle(_Facility facility) => ml.CircleOptions(
@@ -518,19 +550,19 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     _HazardZone(
       level: 'High',
       point: ml.LatLng(14.9526, 120.8912),
-      radiusPixels: 82,
+      radiusPixels: 56,
       color: Color(0xFFDC2626),
     ),
     _HazardZone(
       level: 'Medium',
       point: ml.LatLng(14.9615, 120.9004),
-      radiusPixels: 72,
+      radiusPixels: 48,
       color: Color(0xFFF59E0B),
     ),
     _HazardZone(
       level: 'Low',
       point: ml.LatLng(14.9468, 120.9044),
-      radiusPixels: 62,
+      radiusPixels: 40,
       color: Color(0xFF22C55E),
     ),
   ];
