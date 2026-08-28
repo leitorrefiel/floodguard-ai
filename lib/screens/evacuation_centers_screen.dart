@@ -17,7 +17,29 @@ class EvacuationCentersScreen extends StatefulWidget {
 }
 
 class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
-  static const _mapStyle = 'https://demotiles.maplibre.org/style.json';
+  static const _geoapifyApiKey = String.fromEnvironment('GEOAPIFY_API_KEY');
+  static const _fallbackMapStyle = '''
+{
+  "version": 8,
+  "sources": {
+    "osm": {
+      "type": "raster",
+      "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      "tileSize": 256,
+      "attribution": "OpenStreetMap contributors"
+    }
+  },
+  "layers": [
+    {
+      "id": "osm",
+      "type": "raster",
+      "source": "osm",
+      "minzoom": 0,
+      "maxzoom": 20
+    }
+  ]
+}
+''';
   static const _baliwag = ml.LatLng(14.9547, 120.8969);
   static const _facilities = [
     _Facility(
@@ -60,6 +82,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   bool _showFloodHazard = true;
   bool _showFacilities = true;
   bool _styleReady = false;
+
+  String get _mapStyle => _geoapifyApiKey.isNotEmpty
+      ? 'https://maps.geoapify.com/v1/styles/osm-bright-smooth/style.json?apiKey=$_geoapifyApiKey'
+      : _fallbackMapStyle;
 
   @override
   void initState() {
@@ -172,14 +198,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     await controller.clearCircles();
 
     if (_showFloodHazard) {
-      await controller.addCircles(
-        _hazardZones().map(_hazardCircle).toList(),
-      );
+      await controller.addCircles(_hazardZones().map(_hazardCircle).toList());
     }
     if (_showFacilities) {
-      await controller.addCircles(
-        _facilities.map(_facilityCircle).toList(),
-      );
+      await controller.addCircles(_facilities.map(_facilityCircle).toList());
     }
     await controller.addCircle(
       ml.CircleOptions(
@@ -219,7 +241,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   );
 
   Widget _mapView() => ml.MapLibreMap(
-    initialCameraPosition: ml.CameraPosition(target: _mapCenter, zoom: 13),
+    initialCameraPosition: ml.CameraPosition(target: _mapCenter, zoom: 14.2),
     styleString: _mapStyle,
     compassEnabled: false,
     rotateGesturesEnabled: false,
@@ -275,7 +297,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
   Widget _mapQuickActions() => Positioned(
     right: 16,
-    top: 86,
+    top: 88,
     child: Column(
       children: [
         IconButton.filled(
@@ -286,9 +308,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         const SizedBox(height: 8),
         IconButton.filledTonal(
           onPressed: _toggleFloodZones,
-          icon: Icon(
-            _showFloodHazard ? Icons.flood_outlined : Icons.flood,
-          ),
+          icon: Icon(_showFloodHazard ? Icons.flood_outlined : Icons.flood),
           tooltip: 'Flood zones',
         ),
         const SizedBox(height: 8),
@@ -302,8 +322,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   );
 
   Widget _bottomPanel(BuildContext context) => DraggableScrollableSheet(
-    initialChildSize: .38,
-    minChildSize: .2,
+    initialChildSize: .3,
+    minChildSize: .16,
     maxChildSize: .78,
     builder: (context, controller) => DecoratedBox(
       decoration: const BoxDecoration(
@@ -376,10 +396,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           ),
           const SizedBox(height: 8),
           ..._facilities.map(
-            (facility) => _CenterCard(
-              facility,
-              onTap: () => _focusFacility(facility),
-            ),
+            (facility) =>
+                _CenterCard(facility, onTap: () => _focusFacility(facility)),
           ),
           const SizedBox(height: 8),
           const _EmergencyHelpCard(),
@@ -470,10 +488,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     geometry: zone.point,
     circleRadius: zone.radiusPixels * _scenarioMultiplier,
     circleColor: _hex(zone.color),
-    circleOpacity: .24,
-    circleStrokeWidth: 2,
+    circleOpacity: .16,
+    circleStrokeWidth: 1.5,
     circleStrokeColor: _hex(zone.color),
-    circleStrokeOpacity: .72,
+    circleStrokeOpacity: .64,
   );
 
   ml.CircleOptions _facilityCircle(_Facility facility) => ml.CircleOptions(
@@ -488,9 +506,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   _HazardZone _nearestHazardZone() {
     final zones = _hazardZones().toList();
     zones.sort(
-      (a, b) => _distanceMeters(_assessmentPoint, a.point).compareTo(
-        _distanceMeters(_assessmentPoint, b.point),
-      ),
+      (a, b) => _distanceMeters(
+        _assessmentPoint,
+        a.point,
+      ).compareTo(_distanceMeters(_assessmentPoint, b.point)),
     );
     return zones.first;
   }
