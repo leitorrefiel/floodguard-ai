@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/device_location_service.dart';
@@ -50,12 +51,12 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
   final _locationService = DeviceLocationService();
   final _weatherService = WeatherService();
-  final _panelScrollController = ScrollController(keepScrollOffset: false);
   ml.MapLibreMapController? _mapController;
   ml.LatLng _mapCenter = _baliwag;
   ml.LatLng _assessmentPoint = _baliwag;
   String _locationLabel = 'Baliwag, Bulacan';
   String _scenario = 'rare';
+  DateTime? _locationUpdatedAt;
   WeatherSnapshot? _weather;
   String? _weatherError;
   bool _isRefreshing = false;
@@ -69,12 +70,6 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     _restoreSavedLocation();
   }
 
-  @override
-  void dispose() {
-    _panelScrollController.dispose();
-    super.dispose();
-  }
-
   Future<void> _restoreSavedLocation() async {
     final location = await _locationService.getSavedLocation();
     if (location != null && mounted) {
@@ -83,6 +78,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         _mapCenter = point;
         _assessmentPoint = point;
         _locationLabel = location.label;
+        _locationUpdatedAt = DateTime.now();
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _moveCamera(point, zoom: 15.4);
@@ -125,6 +121,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         _mapCenter = point;
         _assessmentPoint = point;
         _locationLabel = location.label;
+        _locationUpdatedAt = DateTime.now();
       });
       await _moveCamera(point, zoom: 15.4);
       await _refreshMapAnnotations();
@@ -144,8 +141,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     setState(() {
       _assessmentPoint = point;
       _mapCenter = point;
-      _locationLabel =
-          '${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}';
+      _locationLabel = 'Selected map area';
+      _locationUpdatedAt = DateTime.now();
     });
     await _moveCamera(point, zoom: 15.4);
     await _refreshMapAnnotations();
@@ -222,19 +219,15 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   Widget build(BuildContext context) => Scaffold(
     bottomNavigationBar: const AppBottomNav(index: 0),
     body: SafeArea(
-      child: Column(children: [_mapHeader(context), _bottomPanel(context)]),
-    ),
-  );
-
-  Widget _mapHeader(BuildContext context) => SizedBox(
-    height: MediaQuery.sizeOf(context).height * .58,
-    child: Stack(
-      children: [
-        Positioned.fill(child: _mapView()),
-        _trackingMarker(),
-        _topBar(context),
-        _mapQuickActions(),
-      ],
+      child: Stack(
+        children: [
+          Positioned.fill(child: _mapView()),
+          _trackingMarker(),
+          _topBar(context),
+          _mapQuickActions(),
+          _bottomSheet(context),
+        ],
+      ),
     ),
   );
 
@@ -385,8 +378,13 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     ),
   );
 
-  Widget _bottomPanel(BuildContext context) => Expanded(
-    child: DecoratedBox(
+  Widget _bottomSheet(BuildContext context) => DraggableScrollableSheet(
+    initialChildSize: .36,
+    minChildSize: .26,
+    maxChildSize: .78,
+    snap: true,
+    snapSizes: const [.36, .78],
+    builder: (context, scrollController) => DecoratedBox(
       decoration: const BoxDecoration(
         color: Color(0xFFF8FBFF),
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -399,7 +397,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         ],
       ),
       child: ListView(
-        controller: _panelScrollController,
+        controller: scrollController,
         padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
         children: [
           Center(
@@ -413,19 +411,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              const Icon(Icons.layers_outlined, color: AppTheme.blue),
-              const SizedBox(width: 8),
-              Text(
-                'Flood Map',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
+          _selectedUserCard(context),
+          const SizedBox(height: 10),
+          _peopleSelector(),
+          const SizedBox(height: 12),
           _hazardSummaryCard(),
           const SizedBox(height: 8),
           _scenarioSelector(),
@@ -456,6 +445,102 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       ),
     ),
   );
+
+  Widget _selectedUserCard(BuildContext context) {
+    final person = _currentPerson();
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          _PersonAvatar(person: person, selected: true),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  person.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  person.locationLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppTheme.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEAFBF1),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF16A34A),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  person.updatedLabel,
+                  style: const TextStyle(
+                    color: Color(0xFF166534),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _peopleSelector() {
+    final person = _currentPerson();
+    return SizedBox(
+      height: 96,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.zero,
+        children: [
+          _PersonChip(
+            person: person,
+            selected: true,
+            onTap: () => _moveCamera(_assessmentPoint, zoom: 15.8),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _scenarioSelector() => Row(
     children: [
@@ -526,6 +611,55 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     'heavy' => 'Heavy flood scenario',
     _ => 'Rare extreme flood scenario',
   };
+
+  _TrackedMapPerson _currentPerson() {
+    final user = Supabase.instance.client.auth.currentUser;
+    final metadataName =
+        user?.userMetadata?['name'] as String? ??
+        user?.userMetadata?['full_name'] as String?;
+    final fallbackName = user?.email?.split('@').first;
+    final name = _cleanName(metadataName ?? fallbackName ?? 'You');
+    return _TrackedMapPerson(
+      name: name,
+      initials: _initials(name),
+      locationLabel: _locationLabel,
+      updatedLabel: _locationUpdatedLabel,
+    );
+  }
+
+  String get _locationUpdatedLabel {
+    final updatedAt = _locationUpdatedAt;
+    if (updatedAt == null) return 'Live';
+    final elapsed = DateTime.now().difference(updatedAt);
+    if (elapsed.inMinutes < 1) return 'Live';
+    if (elapsed.inMinutes < 60) return '${elapsed.inMinutes}m';
+    if (elapsed.inHours < 24) return '${elapsed.inHours}h';
+    return '${elapsed.inDays}d';
+  }
+
+  String _cleanName(String value) {
+    final trimmed = value.trim().replaceAll(RegExp(r'[._-]+'), ' ');
+    if (trimmed.isEmpty) return 'You';
+    return trimmed
+        .split(RegExp(r'\s+'))
+        .map((part) {
+          if (part.isEmpty) return part;
+          return '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}';
+        })
+        .join(' ');
+  }
+
+  String _initials(String name) {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return 'Y';
+    final first = parts.first[0];
+    final second = parts.length > 1 ? parts.last[0] : '';
+    return '$first$second'.toUpperCase();
+  }
 
   Widget _weatherCard() => Container(
     padding: const EdgeInsets.all(14),
@@ -685,6 +819,97 @@ class _LegendItem extends StatelessWidget {
       const SizedBox(width: 5),
       Text(label, style: const TextStyle(fontSize: 12)),
     ],
+  );
+}
+
+class _PersonAvatar extends StatelessWidget {
+  const _PersonAvatar({required this.person, required this.selected});
+
+  final _TrackedMapPerson person;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: selected ? 54 : 48,
+    height: selected ? 54 : 48,
+    decoration: BoxDecoration(
+      color: Colors.white,
+      shape: BoxShape.circle,
+      border: Border.all(
+        color: selected ? AppTheme.blue : const Color(0xFFD8E1EE),
+        width: selected ? 3 : 2,
+      ),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x18000000),
+          blurRadius: 12,
+          offset: Offset(0, 5),
+        ),
+      ],
+    ),
+    child: Center(
+      child: CircleAvatar(
+        radius: selected ? 21 : 18,
+        backgroundColor: AppTheme.paleBlue,
+        foregroundColor: AppTheme.navy,
+        child: Text(
+          person.initials,
+          style: const TextStyle(fontWeight: FontWeight.w900),
+        ),
+      ),
+    ),
+  );
+}
+
+class _PersonChip extends StatelessWidget {
+  const _PersonChip({
+    required this.person,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _TrackedMapPerson person;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    label: 'Focus ${person.name}',
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        width: 82,
+        margin: const EdgeInsets.only(right: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFEAF3FF) : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected ? AppTheme.blue : const Color(0xFFE3EAF4),
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _PersonAvatar(person: person, selected: false),
+            const SizedBox(height: 5),
+            Text(
+              person.name.split(' ').first,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? AppTheme.navy : AppTheme.ink,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
   );
 }
 
@@ -912,6 +1137,20 @@ class _EmergencyNumber {
   final String number;
   final String displayNumber;
   final String detail;
+}
+
+class _TrackedMapPerson {
+  const _TrackedMapPerson({
+    required this.name,
+    required this.initials,
+    required this.locationLabel,
+    required this.updatedLabel,
+  });
+
+  final String name;
+  final String initials;
+  final String locationLabel;
+  final String updatedLabel;
 }
 
 class _HazardZone {
