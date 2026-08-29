@@ -18,31 +18,7 @@ class EvacuationCentersScreen extends StatefulWidget {
 }
 
 class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
-  static const _geoapifyApiKey = String.fromEnvironment('GEOAPIFY_API_KEY');
-  static const _fallbackMapStyle = '''
-{
-  "version": 8,
-  "sources": {
-    "osm": {
-      "type": "raster",
-      "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      "tileSize": 256,
-      "attribution": "OpenStreetMap contributors"
-    }
-  },
-  "layers": [
-    {
-      "id": "osm",
-      "type": "raster",
-      "source": "osm",
-      "minzoom": 0,
-      "maxzoom": 20
-    }
-  ]
-}
-''';
-  static const _streetTileAttribution =
-      'Powered by Geoapify | OpenMapTiles | OpenStreetMap contributors';
+  static const _mapStyle = 'https://tiles.openfreemap.org/styles/positron';
   static const _baliwag = ml.LatLng(14.9547, 120.8969);
   static const _facilities = [
     _Facility(
@@ -85,38 +61,6 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   bool _showFloodHazard = true;
   bool _showFacilities = false;
   bool _styleReady = false;
-
-  String get _mapStyle {
-    if (_geoapifyApiKey.isEmpty) return _fallbackMapStyle;
-    return '''
-{
-  "version": 8,
-  "sources": {
-    "geoapify-streets": {
-      "type": "raster",
-      "tiles": [
-        "https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=$_geoapifyApiKey"
-      ],
-      "tileSize": 256,
-      "attribution": "$_streetTileAttribution",
-      "maxzoom": 20
-    }
-  },
-  "layers": [
-    {
-      "id": "geoapify-streets",
-      "type": "raster",
-      "source": "geoapify-streets",
-      "paint": {
-        "raster-opacity": 1,
-        "raster-saturation": -0.12,
-        "raster-contrast": 0.04
-      }
-    }
-  ]
-}
-''';
-  }
 
   @override
   void initState() {
@@ -229,7 +173,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     await controller.clearCircles();
 
     if (_showFloodHazard) {
-      await controller.addCircles(_hazardZones().map(_hazardCircle).toList());
+      await controller.addCircle(_hazardHaloCircle(_nearestHazardZone()));
     }
     if (_showFacilities) {
       await controller.addCircles(_facilities.map(_facilityCircle).toList());
@@ -237,11 +181,22 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     await controller.addCircle(
       ml.CircleOptions(
         geometry: _assessmentPoint,
-        circleRadius: 11,
-        circleColor: '#103B73',
+        circleRadius: 14,
+        circleColor: '#2563EB',
         circleOpacity: 1,
         circleStrokeColor: '#FFFFFF',
-        circleStrokeWidth: 4,
+        circleStrokeWidth: 5,
+      ),
+    );
+    await controller.addCircle(
+      ml.CircleOptions(
+        geometry: _assessmentPoint,
+        circleRadius: 22,
+        circleColor: '#2563EB',
+        circleOpacity: .12,
+        circleStrokeColor: '#2563EB',
+        circleStrokeOpacity: .24,
+        circleStrokeWidth: 1,
       ),
     );
   }
@@ -265,10 +220,11 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   );
 
   Widget _mapHeader(BuildContext context) => SizedBox(
-    height: MediaQuery.sizeOf(context).height * .42,
+    height: MediaQuery.sizeOf(context).height * .45,
     child: Stack(
       children: [
         Positioned.fill(child: _mapView()),
+        _trackingMarker(),
         _topBar(context),
         _mapQuickActions(),
       ],
@@ -292,6 +248,68 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     onMapClick: (_, point) => _moveAssessmentPoint(point),
     annotationOrder: const [ml.AnnotationType.circle],
   );
+
+  Widget _trackingMarker() {
+    final zone = _nearestHazardZone();
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Center(
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              if (_showFloodHazard)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  width: 118,
+                  height: 118,
+                  decoration: BoxDecoration(
+                    color: zone.color.withValues(alpha: .15),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: zone.color.withValues(alpha: .42),
+                      width: 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: zone.color.withValues(alpha: .16),
+                        blurRadius: 24,
+                        spreadRadius: 4,
+                      ),
+                    ],
+                  ),
+                ),
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: .2),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: AppTheme.blue,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _topBar(BuildContext context) => Positioned(
     top: 12,
@@ -407,7 +425,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           const _HazardLegend(),
           const SizedBox(height: 6),
           const Text(
-            'Colored rings show sample flood-prone zones. Tap the map to assess another spot.',
+            'The colored halo marks the assessed flood-prone area. Tap the map to check another spot.',
             style: TextStyle(color: Color(0xFF5B6677), fontSize: 12),
           ),
           const SizedBox(height: 10),
@@ -538,14 +556,15 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     ),
   );
 
-  ml.CircleOptions _hazardCircle(_HazardZone zone) => ml.CircleOptions(
-    geometry: zone.point,
+  ml.CircleOptions _hazardHaloCircle(_HazardZone zone) => ml.CircleOptions(
+    geometry: _assessmentPoint,
     circleRadius: zone.radiusPixels * _scenarioMultiplier,
     circleColor: _hex(zone.color),
-    circleOpacity: .12,
-    circleStrokeWidth: 2,
+    circleOpacity: .2,
+    circleBlur: .18,
+    circleStrokeWidth: 2.5,
     circleStrokeColor: _hex(zone.color),
-    circleStrokeOpacity: .7,
+    circleStrokeOpacity: .52,
   );
 
   ml.CircleOptions _facilityCircle(_Facility facility) => ml.CircleOptions(
