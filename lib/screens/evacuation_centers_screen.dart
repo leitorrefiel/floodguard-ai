@@ -1,4 +1,6 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
@@ -63,6 +65,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   bool _showFloodHazard = true;
   bool _showFacilities = false;
   bool _styleReady = false;
+  bool _mapImagesReady = false;
 
   @override
   void initState() {
@@ -80,9 +83,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         _locationLabel = location.label;
         _locationUpdatedAt = DateTime.now();
       });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _moveCamera(point, zoom: 15.4);
-      });
+      await _moveCamera(point, zoom: 15.4);
     }
     _loadWeather();
   }
@@ -171,10 +172,67 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     );
   }
 
+  Future<void> _registerMapImages() async {
+    final controller = _mapController;
+    if (controller == null || _mapImagesReady) return;
+    final markerBytes = await _buildPersonMarkerBytes(
+      _currentPerson().initials,
+    );
+    await controller.addImage('fg-current-person', markerBytes);
+    _mapImagesReady = true;
+  }
+
+  Future<Uint8List> _buildPersonMarkerBytes(String initials) async {
+    const size = 112.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final center = Offset(size / 2, size / 2);
+
+    final shadowPaint = Paint()
+      ..color = Colors.black.withValues(alpha: .18)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+    canvas.drawCircle(center + const Offset(0, 5), 43, shadowPaint);
+
+    canvas.drawCircle(center, 44, Paint()..color = Colors.white);
+    canvas.drawCircle(
+      center,
+      39,
+      Paint()
+        ..color = AppTheme.blue
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 6,
+    );
+    canvas.drawCircle(center, 30, Paint()..color = AppTheme.paleBlue);
+
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: initials,
+        style: const TextStyle(
+          color: AppTheme.navy,
+          fontSize: 28,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    textPainter.paint(
+      canvas,
+      center - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(size.toInt(), size.toInt());
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    return bytes!.buffer.asUint8List();
+  }
+
   Future<void> _refreshMapAnnotations() async {
     final controller = _mapController;
     if (controller == null || !_styleReady) return;
     await controller.clearCircles();
+    await controller.clearSymbols();
+    await _registerMapImages();
 
     if (_showFloodHazard) {
       await controller.addCircle(_hazardHaloCircle(_nearestHazardZone()));
@@ -203,6 +261,17 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         circleStrokeWidth: 1,
       ),
     );
+    await controller.addSymbol(
+      ml.SymbolOptions(
+        geometry: _assessmentPoint,
+        iconImage: 'fg-current-person',
+        iconSize: .9,
+        iconAnchor: 'center',
+        zIndex: 10,
+      ),
+    );
+    await controller.setSymbolIconAllowOverlap(true);
+    await controller.setSymbolIconIgnorePlacement(true);
   }
 
   void _toggleFloodZones() {
@@ -222,7 +291,6 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       child: Stack(
         children: [
           Positioned.fill(child: _mapView()),
-          _trackingMarker(),
           _topBar(context),
           _mapQuickActions(),
           _bottomSheet(context),
@@ -240,76 +308,17 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     attributionButtonPosition: ml.AttributionButtonPosition.bottomLeft,
     onMapCreated: (controller) {
       _mapController = controller;
+      _moveCamera(_assessmentPoint, zoom: 15.4);
     },
     onStyleLoadedCallback: () {
       _styleReady = true;
+      _mapImagesReady = false;
+      _moveCamera(_assessmentPoint, zoom: 15.4);
       _refreshMapAnnotations();
     },
     onMapClick: (_, point) => _moveAssessmentPoint(point),
-    annotationOrder: const [ml.AnnotationType.circle],
+    annotationOrder: const [ml.AnnotationType.circle, ml.AnnotationType.symbol],
   );
-
-  Widget _trackingMarker() {
-    final zone = _nearestHazardZone();
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Center(
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              if (_showFloodHazard)
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 250),
-                  width: 132,
-                  height: 132,
-                  decoration: BoxDecoration(
-                    color: zone.color.withValues(alpha: .13),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: zone.color.withValues(alpha: .5),
-                      width: 2,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: zone.color.withValues(alpha: .16),
-                        blurRadius: 24,
-                        spreadRadius: 4,
-                      ),
-                    ],
-                  ),
-                ),
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: .2),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: Container(
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: AppTheme.blue,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _topBar(BuildContext context) => Positioned(
     top: 12,
