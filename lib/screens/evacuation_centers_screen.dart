@@ -18,7 +18,7 @@ class EvacuationCentersScreen extends StatefulWidget {
 }
 
 class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
-  static const _mapStyle = 'https://tiles.openfreemap.org/styles/positron';
+  static const _mapStyle = 'https://tiles.openfreemap.org/styles/bright';
   static const _baliwag = ml.LatLng(14.9547, 120.8969);
   static const _facilities = [
     _Facility(
@@ -50,6 +50,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
   final _locationService = DeviceLocationService();
   final _weatherService = WeatherService();
+  final _panelScrollController = ScrollController(keepScrollOffset: false);
   ml.MapLibreMapController? _mapController;
   ml.LatLng _mapCenter = _baliwag;
   ml.LatLng _assessmentPoint = _baliwag;
@@ -66,6 +67,12 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   void initState() {
     super.initState();
     _restoreSavedLocation();
+  }
+
+  @override
+  void dispose() {
+    _panelScrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _restoreSavedLocation() async {
@@ -220,7 +227,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   );
 
   Widget _mapHeader(BuildContext context) => SizedBox(
-    height: MediaQuery.sizeOf(context).height * .45,
+    height: MediaQuery.sizeOf(context).height * .58,
     child: Stack(
       children: [
         Positioned.fill(child: _mapView()),
@@ -260,13 +267,13 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
               if (_showFloodHazard)
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 250),
-                  width: 118,
-                  height: 118,
+                  width: 132,
+                  height: 132,
                   decoration: BoxDecoration(
-                    color: zone.color.withValues(alpha: .15),
+                    color: zone.color.withValues(alpha: .13),
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: zone.color.withValues(alpha: .42),
+                      color: zone.color.withValues(alpha: .5),
                       width: 2,
                     ),
                     boxShadow: [
@@ -279,8 +286,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                   ),
                 ),
               Container(
-                width: 42,
-                height: 42,
+                width: 46,
+                height: 46,
                 decoration: BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,
@@ -294,8 +301,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                 ),
                 child: Center(
                   child: Container(
-                    width: 26,
-                    height: 26,
+                    width: 28,
+                    height: 28,
                     decoration: BoxDecoration(
                       color: AppTheme.blue,
                       shape: BoxShape.circle,
@@ -355,7 +362,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         _MapActionButton(
-          label: 'My location',
+          label: 'Locate',
           icon: Icons.my_location,
           selected: true,
           onPressed: _isRefreshing ? null : _useMyLocation,
@@ -382,7 +389,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     child: DecoratedBox(
       decoration: const BoxDecoration(
         color: Color(0xFFF8FBFF),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         boxShadow: [
           BoxShadow(
             color: Color(0x26000000),
@@ -392,6 +399,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         ],
       ),
       child: ListView(
+        controller: _panelScrollController,
         padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
         children: [
           Center(
@@ -696,14 +704,14 @@ class _MapActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Material(
     color: selected ? AppTheme.blue : Colors.white,
-    elevation: 3,
-    shadowColor: const Color(0x30000000),
-    borderRadius: BorderRadius.circular(22),
+    elevation: 5,
+    shadowColor: const Color(0x24000000),
+    borderRadius: BorderRadius.circular(24),
     child: InkWell(
       onTap: onPressed,
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(24),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -717,7 +725,7 @@ class _MapActionButton extends StatelessWidget {
               label,
               style: TextStyle(
                 color: selected ? Colors.white : AppTheme.navy,
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: FontWeight.w700,
               ),
             ),
