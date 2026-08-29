@@ -260,14 +260,18 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   Widget build(BuildContext context) => Scaffold(
     bottomNavigationBar: const AppBottomNav(index: 0),
     body: SafeArea(
-      child: Stack(
-        children: [
-          Positioned.fill(child: _mapView()),
-          _topBar(context),
-          _mapQuickActions(),
-          _bottomPanel(context),
-        ],
-      ),
+      child: Column(children: [_mapHeader(context), _bottomPanel(context)]),
+    ),
+  );
+
+  Widget _mapHeader(BuildContext context) => SizedBox(
+    height: MediaQuery.sizeOf(context).height * .42,
+    child: Stack(
+      children: [
+        Positioned.fill(child: _mapView()),
+        _topBar(context),
+        _mapQuickActions(),
+      ],
     ),
   );
 
@@ -356,15 +360,11 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     ),
   );
 
-  Widget _bottomPanel(BuildContext context) => Positioned(
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: MediaQuery.sizeOf(context).height * .58,
+  Widget _bottomPanel(BuildContext context) => Expanded(
     child: DecoratedBox(
       decoration: const BoxDecoration(
         color: Color(0xFFF8FBFF),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         boxShadow: [
           BoxShadow(
             color: Color(0x26000000),
@@ -374,7 +374,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         ],
       ),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
         children: [
           Center(
             child: Container(
@@ -401,40 +401,25 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           ),
           const SizedBox(height: 8),
           _hazardSummaryCard(),
-          const SizedBox(height: 10),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'usual', label: Text('Usual')),
-              ButtonSegment(value: 'heavy', label: Text('Heavy')),
-              ButtonSegment(value: 'rare', label: Text('Rare')),
-            ],
-            selected: {_scenario},
-            onSelectionChanged: (values) {
-              setState(() => _scenario = values.first);
-              _refreshMapAnnotations();
-            },
-          ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+          _scenarioSelector(),
+          const SizedBox(height: 8),
           const _HazardLegend(),
           const SizedBox(height: 6),
           const Text(
-            'Colored rings show sample flood-prone zones around the selected point. Tap the map to assess another spot.',
+            'Colored rings show sample flood-prone zones. Tap the map to assess another spot.',
             style: TextStyle(color: Color(0xFF5B6677), fontSize: 12),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           const _EmergencyHelpCard(),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           _weatherCard(),
-          const SizedBox(height: 18),
+          const SizedBox(height: 10),
           Text(
             'Critical Facilities',
             style: Theme.of(
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Tap a facility to move the map there. Verify availability with the LGU before emergency use.',
           ),
           const SizedBox(height: 8),
           ..._facilities.map(
@@ -445,6 +430,33 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       ),
     ),
   );
+
+  Widget _scenarioSelector() => Row(
+    children: [
+      _ScenarioChip(
+        label: 'Usual',
+        selected: _scenario == 'usual',
+        onTap: () => _setScenario('usual'),
+      ),
+      const SizedBox(width: 8),
+      _ScenarioChip(
+        label: 'Heavy',
+        selected: _scenario == 'heavy',
+        onTap: () => _setScenario('heavy'),
+      ),
+      const SizedBox(width: 8),
+      _ScenarioChip(
+        label: 'Rare',
+        selected: _scenario == 'rare',
+        onTap: () => _setScenario('rare'),
+      ),
+    ],
+  );
+
+  void _setScenario(String scenario) {
+    setState(() => _scenario = scenario);
+    _refreshMapAnnotations();
+  }
 
   Widget _hazardSummaryCard() {
     final zone = _nearestHazardZone();
@@ -697,6 +709,47 @@ class _MapActionButton extends StatelessWidget {
   );
 }
 
+class _ScenarioChip extends StatelessWidget {
+  const _ScenarioChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Material(
+      color: selected ? const Color(0xFFE7EEFF) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: selected ? AppTheme.blue : const Color(0xFFD8E1EE),
+        ),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected ? AppTheme.blue : AppTheme.navy,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class _CenterCard extends StatelessWidget {
   const _CenterCard(this.facility, {required this.onTap});
 
@@ -776,7 +829,7 @@ class _EmergencyHelpCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
     child: Padding(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -792,28 +845,27 @@ class _EmergencyHelpCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Tap a number to open the phone dialer. Confirm local DRRMO numbers with your LGU.',
-            style: TextStyle(color: Color(0xFF5B6677)),
+            'Tap Call to open the phone dialer.',
+            style: TextStyle(color: Color(0xFF5B6677), fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _numbers
+                .map(
+                  (item) => FilledButton.icon(
+                    onPressed: () => _call(context, item.number),
+                    icon: const Icon(Icons.phone, size: 16),
+                    label: Text(item.displayNumber),
+                  ),
+                )
+                .toList(),
           ),
           const SizedBox(height: 8),
-          ..._numbers.map(
-            (item) => ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(
-                backgroundColor: Color(0xFFFFE8E8),
-                child: Icon(Icons.phone_in_talk_outlined, color: Colors.red),
-              ),
-              title: Text(
-                item.label,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              subtitle: Text('${item.displayNumber}\n${item.detail}'),
-              isThreeLine: true,
-              trailing: FilledButton(
-                onPressed: () => _call(context, item.number),
-                child: const Text('Call'),
-              ),
-            ),
+          Text(
+            _numbers.map((item) => item.label).join(' / '),
+            style: const TextStyle(color: Color(0xFF5B6677), fontSize: 12),
           ),
         ],
       ),

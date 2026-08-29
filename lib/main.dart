@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'screens/home_screen.dart';
@@ -9,7 +8,6 @@ import 'utils/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  MapLibreMap.useHybridComposition = true;
   await Supabase.initialize(
     url: 'https://folbvzmvxqjmfzzssshm.supabase.co',
     publishableKey: 'sb_publishable_QGecyaWlzS4qVYmjOpralA_gYFyzPAh',
