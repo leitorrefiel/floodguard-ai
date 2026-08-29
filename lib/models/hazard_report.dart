@@ -55,7 +55,7 @@ class HazardReport {
   };
 
   Map<String, dynamic> toApiInsertJson({String? userId}) => {
-    if (userId != null) 'user_id': userId,
+    'user_id': ?userId,
     'type': type.name,
     'severity': severity,
     'location': location,

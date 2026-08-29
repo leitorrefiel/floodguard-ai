@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'screens/home_screen.dart';
@@ -7,6 +8,7 @@ import 'services/notification_service.dart';
 import 'utils/app_theme.dart';
 
 Future<void> main() async {
+  ml.MapLibreMap.useHybridComposition = true;
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(
     url: 'https://folbvzmvxqjmfzzssshm.supabase.co',
