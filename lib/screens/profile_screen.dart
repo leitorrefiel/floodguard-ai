@@ -207,6 +207,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   String? _missingColumn(Object error) {
     if (error is! PostgrestException) return null;
+    final postgresMissingColumn = RegExp(
+      r'column profiles\.([a-z_]+) does not exist',
+    ).firstMatch(error.message);
+    if (postgresMissingColumn != null) {
+      return postgresMissingColumn.group(1);
+    }
     return RegExp(
       "Could not find the '([^']+)' column",
     ).firstMatch(error.message)?.group(1);
