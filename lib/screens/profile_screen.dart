@@ -17,6 +17,7 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   static const _maxDisplayNameLength = 60;
   static const _avatarBucket = 'profile-pictures';
+  static const _authRedirectUrl = 'io.supabase.floodguard://auth-callback';
 
   final _client = Supabase.instance.client;
   final _imagePicker = ImagePicker();
@@ -92,16 +93,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
       if (edit.selectedImagePath != null) {
         avatarPath = await _uploadAvatar(user.id, edit.selectedImagePath!);
+        if (_profile.avatarPath.isNotEmpty &&
+            _profile.avatarPath != avatarPath) {
+          await _removeAvatar(user.id, _profile.avatarPath);
+        }
       }
       final details = _ProfileDetails(
         displayName: edit.displayName,
         avatarPath: avatarPath,
       );
       final savedProfile = await _saveProfileRecord(user, details);
+      final effectiveProfile = _ProfileDetails(
+        displayName: savedProfile.displayName,
+        avatarPath: savedProfile.avatarPath.isEmpty
+            ? details.avatarPath
+            : savedProfile.avatarPath,
+      );
+      await _client.auth.updateUser(
+        UserAttributes(
+          data: {
+            'display_name': effectiveProfile.displayName,
+            'avatar_path': effectiveProfile.avatarPath,
+          },
+        ),
+      );
       if (!mounted) return;
-      setState(() => _profile = savedProfile);
-      await _refreshAvatarUrl(savedProfile.avatarPath);
+      setState(() => _profile = effectiveProfile);
+      await _refreshAvatarUrl(effectiveProfile.avatarPath);
       _message('Profile updated.');
+    } on StorageException catch (error) {
+      debugPrint('Profile photo upload unavailable: ${error.message}');
+      if (!mounted) return;
+      _message('Could not upload profile photo. Please try again.');
     } catch (error) {
       debugPrint('Profile save unavailable: $error');
       if (!mounted) return;
@@ -227,15 +250,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       includeAvatar ? 'display_name, avatar_path' : 'display_name';
 
   Future<String> _uploadAvatar(String userId, String imagePath) async {
-    final path = '$userId/avatar.jpg';
+    final extension = _avatarExtension(imagePath);
+    final path = '$userId/avatar.$extension';
     await _client.storage
         .from(_avatarBucket)
         .upload(
           path,
           io.File(imagePath),
-          fileOptions: const FileOptions(
+          fileOptions: FileOptions(
             cacheControl: '3600',
-            contentType: 'image/jpeg',
+            contentType: _avatarContentType(extension),
             upsert: true,
           ),
         );
@@ -271,7 +295,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _changeEmail() async {
-    final result = await showModalBottomSheet<String>(
+    final result = await showModalBottomSheet<_EmailChangeRequest>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -283,36 +307,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     setState(() => _isUpdatingAccount = true);
     try {
-      await _client.auth.updateUser(UserAttributes(email: result));
-      _message('Check your new email address to confirm the change.');
+      final currentEmail = _client.auth.currentUser?.email ?? '';
+      await _client.auth.signInWithPassword(
+        email: currentEmail,
+        password: result.currentPassword,
+      );
+      await _client.auth.updateUser(
+        UserAttributes(email: result.newEmail),
+        emailRedirectTo: _authRedirectUrl,
+      );
+      _message('Confirmation email sent.');
     } on AuthException catch (error) {
-      _message(error.message);
+      debugPrint('Email update unavailable: ${error.message}');
+      _message('Could not send confirmation email.');
     } catch (error) {
       debugPrint('Email update unavailable: $error');
-      _message('Email update is unavailable right now.');
+      _message('Could not send confirmation email.');
     } finally {
       if (mounted) setState(() => _isUpdatingAccount = false);
     }
   }
 
   Future<void> _changePassword() async {
-    final result = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => const _ChangePasswordSheet(),
-    );
-    if (result == null) return;
-
     setState(() => _isUpdatingAccount = true);
     try {
-      await _client.auth.updateUser(UserAttributes(password: result));
+      await _client.auth.reauthenticate();
+      if (!mounted) return;
+      setState(() => _isUpdatingAccount = false);
+      final result = await showModalBottomSheet<_PasswordChangeRequest>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (context) => const _ChangePasswordSheet(),
+      );
+      if (result == null) return;
+
+      setState(() => _isUpdatingAccount = true);
+      await _client.auth.updateUser(
+        UserAttributes(password: result.newPassword, nonce: result.nonce),
+      );
       _message('Password updated successfully.');
     } on AuthException catch (error) {
-      _message(error.message);
+      debugPrint('Password update unavailable: ${error.message}');
+      _message('Could not update password.');
     } catch (error) {
       debugPrint('Password update unavailable: $error');
-      _message('Password update is unavailable right now.');
+      _message('Could not update password.');
     } finally {
       if (mounted) setState(() => _isUpdatingAccount = false);
     }
@@ -333,6 +373,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   bool _isNoRows(Object error) =>
       error is PostgrestException && error.message.contains('PGRST116');
+
+  String _avatarExtension(String path) {
+    final extension = path.split('.').last.toLowerCase();
+    return switch (extension) {
+      'png' => 'png',
+      'webp' => 'webp',
+      _ => 'jpg',
+    };
+  }
+
+  String _avatarContentType(String extension) => switch (extension) {
+    'png' => 'image/png',
+    'webp' => 'image/webp',
+    _ => 'image/jpeg',
+  };
 
   void _message(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
@@ -716,10 +771,13 @@ class _ChangeEmailSheet extends StatefulWidget {
 class _ChangeEmailSheetState extends State<_ChangeEmailSheet> {
   final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
     _email.dispose();
+    _password.dispose();
     super.dispose();
   }
 
@@ -755,6 +813,28 @@ class _ChangeEmailSheetState extends State<_ChangeEmailSheet> {
               Text(widget.currentEmail),
               const SizedBox(height: 18),
               TextFormField(
+                controller: _password,
+                obscureText: _obscurePassword,
+                autofillHints: const [AutofillHints.password],
+                decoration: InputDecoration(
+                  labelText: 'Current Password',
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                ),
+                validator: (value) => value != null && value.isNotEmpty
+                    ? null
+                    : 'Enter your current password.',
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
                 controller: _email,
                 keyboardType: TextInputType.emailAddress,
                 autofillHints: const [AutofillHints.email],
@@ -779,9 +859,15 @@ class _ChangeEmailSheetState extends State<_ChangeEmailSheet> {
                 child: FilledButton(
                   onPressed: () {
                     if (!(_formKey.currentState?.validate() ?? false)) return;
-                    Navigator.pop(context, _text(_email.text));
+                    Navigator.pop(
+                      context,
+                      _EmailChangeRequest(
+                        newEmail: _text(_email.text),
+                        currentPassword: _password.text,
+                      ),
+                    );
                   },
-                  child: const Text('Update Email'),
+                  child: const Text('Send Confirmation'),
                 ),
               ),
             ],
@@ -801,6 +887,7 @@ class _ChangePasswordSheet extends StatefulWidget {
 
 class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
   final _formKey = GlobalKey<FormState>();
+  final _nonce = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   bool _obscurePassword = true;
@@ -808,6 +895,7 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
 
   @override
   void dispose() {
+    _nonce.dispose();
     _password.dispose();
     _confirm.dispose();
     super.dispose();
@@ -833,7 +921,26 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
                   fontWeight: FontWeight.w800,
                 ),
               ),
+              const SizedBox(height: 8),
+              Text(
+                'Enter the verification code sent to your email, then choose a new password.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: AppTheme.muted),
+              ),
               const SizedBox(height: 18),
+              TextFormField(
+                controller: _nonce,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Verification Code',
+                  prefixIcon: Icon(Icons.verified_user_outlined),
+                ),
+                validator: (value) => _text(value).isNotEmpty
+                    ? null
+                    : 'Enter the verification code.',
+              ),
+              const SizedBox(height: 14),
               TextFormField(
                 controller: _password,
                 obscureText: _obscurePassword,
@@ -888,7 +995,13 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
                 child: FilledButton(
                   onPressed: () {
                     if (!(_formKey.currentState?.validate() ?? false)) return;
-                    Navigator.pop(context, _password.text);
+                    Navigator.pop(
+                      context,
+                      _PasswordChangeRequest(
+                        nonce: _text(_nonce.text),
+                        newPassword: _password.text,
+                      ),
+                    );
                   },
                   child: const Text('Update Password'),
                 ),
@@ -899,6 +1012,26 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
       ),
     );
   }
+}
+
+class _EmailChangeRequest {
+  const _EmailChangeRequest({
+    required this.newEmail,
+    required this.currentPassword,
+  });
+
+  final String newEmail;
+  final String currentPassword;
+}
+
+class _PasswordChangeRequest {
+  const _PasswordChangeRequest({
+    required this.nonce,
+    required this.newPassword,
+  });
+
+  final String nonce;
+  final String newPassword;
 }
 
 class _SheetHandle extends StatelessWidget {

@@ -8,6 +8,7 @@ import 'screens/alerts_screen.dart';
 import 'screens/evacuation_centers_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/reset_password_screen.dart';
 import 'services/notification_service.dart';
 import 'utils/app_theme.dart';
 
@@ -88,19 +89,41 @@ class _NotificationTapHandlerState extends State<_NotificationTapHandler> {
   Widget build(BuildContext context) => widget.child;
 }
 
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  bool _isOpeningPasswordRecovery = false;
 
   @override
   Widget build(BuildContext context) {
     final auth = Supabase.instance.client.auth;
     return StreamBuilder<AuthState>(
       stream: auth.onAuthStateChange,
-      builder: (context, _) {
+      builder: (context, snapshot) {
+        if (snapshot.data?.event == AuthChangeEvent.passwordRecovery) {
+          _openPasswordRecovery();
+        }
         return auth.currentSession == null
             ? const LoginScreen()
             : const HomeScreen();
       },
     );
+  }
+
+  void _openPasswordRecovery() {
+    if (_isOpeningPasswordRecovery) return;
+    _isOpeningPasswordRecovery = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const ResetPasswordScreen()),
+      );
+      if (mounted) _isOpeningPasswordRecovery = false;
+    });
   }
 }

@@ -11,6 +11,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const _authRedirectUrl = 'io.supabase.floodguard://auth-callback';
+
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -67,7 +69,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     try {
-      await Supabase.instance.client.auth.resetPasswordForEmail(email);
+      await Supabase.instance.client.auth.resetPasswordForEmail(
+        email,
+        redirectTo: _authRedirectUrl,
+      );
       _showMessage('Check your email for password reset instructions.');
     } on AuthException catch (error) {
       _showMessage(error.message);
