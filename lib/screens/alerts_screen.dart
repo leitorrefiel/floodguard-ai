@@ -438,6 +438,20 @@ class _AlertsScreenState extends State<AlertsScreen> {
   }
 
   Future<void> _sendTestAlert() async {
+    final permitted = await NotificationService.instance.requestPermission();
+    final enabled = await NotificationService.instance
+        .areNotificationsEnabled();
+    if (!permitted || !enabled) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Notifications are disabled. Enable them in system settings to receive alerts.',
+          ),
+        ),
+      );
+      return;
+    }
     await NotificationService.instance.showDemoFloodWatch();
     if (!mounted) return;
     ScaffoldMessenger.of(

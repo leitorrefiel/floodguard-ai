@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -22,8 +23,10 @@ class NotificationService {
 
   static final instance = NotificationService._();
 
-  static const _channelId = 'flood_alerts';
-  static const _channelName = 'Flood alerts';
+  static const _channelId = 'floodguard_alerts_v2';
+  static const _channelName = 'FloodGuard Alerts';
+  static const _channelDescription = 'Flood and hazard safety notifications';
+  static final _vibrationPattern = Int64List.fromList([0, 350, 160, 350]);
 
   final _notifications = FlutterLocalNotificationsPlugin();
   final _tapController = StreamController<Map<String, dynamic>>.broadcast();
@@ -41,9 +44,19 @@ class NotificationService {
       onDidReceiveNotificationResponse: (response) {
         final payload = response.payload;
         if (payload == null || payload.isEmpty) return;
+        try {
+          final decoded = jsonDecode(payload);
+          if (decoded is Map<String, dynamic>) {
+            _tapController.add(decoded);
+            return;
+          }
+        } catch (_) {
+          // Older app versions used plain string payloads.
+        }
         _tapController.add({'payload': payload});
       },
     );
+    await _ensureAlertChannel();
     await _initializeFirebaseMessaging();
   }
 
@@ -78,28 +91,49 @@ class NotificationService {
     Map<String, dynamic>? payload,
   }) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    await _ensureAlertChannel();
+    final expandedBody = payload?['expanded_body']?.toString() ?? body;
     await _notifications.show(
       id: id,
       title: title,
       body: body,
-      notificationDetails: const NotificationDetails(
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           _channelId,
           _channelName,
-          channelDescription: 'Important flood preparedness alerts',
+          channelDescription: _channelDescription,
           importance: Importance.max,
-          priority: Priority.high,
+          priority: Priority.max,
+          styleInformation: BigTextStyleInformation(
+            expandedBody,
+            contentTitle: title,
+            summaryText: 'FloodGuard',
+          ),
+          playSound: true,
+          enableVibration: true,
+          vibrationPattern: _vibrationPattern,
+          channelShowBadge: true,
+          showWhen: true,
+          ticker: title,
+          visibility: NotificationVisibility.public,
+          category: AndroidNotificationCategory.alarm,
+          audioAttributesUsage: AudioAttributesUsage.notificationEvent,
         ),
       ),
-      payload: payload?.toString(),
+      payload: jsonEncode(payload ?? {'type': 'flood_warning'}),
     );
   }
 
   Future<void> showDemoFloodWatch() => showFloodAlert(
     id: 1001,
     title: 'FloodGuard: Flood Warning',
-    body:
-        'Flood conditions may be developing nearby. Check the Flood Map and local advisories for updates.',
+    body: 'Heavy rainfall and a nearby flood report were detected.',
+    payload: const {
+      'type': 'flood_warning',
+      'screen': 'alerts',
+      'expanded_body':
+          'Heavy rainfall and a nearby flood report were detected. Avoid low-lying roads and check the Flood Map for nearby reports.',
+    },
   );
 
   Future<void> registerPushDevice() async {
@@ -187,6 +221,36 @@ class NotificationService {
     } catch (error) {
       debugPrint(
         '[Notifications] Firebase Messaging is not configured yet: $error',
+      );
+    }
+  }
+
+  Future<void> _ensureAlertChannel() async {
+    final android = _notifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    await android?.createNotificationChannel(
+      AndroidNotificationChannel(
+        _channelId,
+        _channelName,
+        description: _channelDescription,
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+        vibrationPattern: _vibrationPattern,
+        showBadge: true,
+        audioAttributesUsage: AudioAttributesUsage.notificationEvent,
+      ),
+    );
+    if (kDebugMode) {
+      final channels = await android?.getNotificationChannels();
+      final channel = channels
+          ?.where((item) => item.id == _channelId)
+          .firstOrNull;
+      debugPrint(
+        '[Notifications] channel=$_channelId importance=${channel?.importance.name} '
+        'sound=${channel?.playSound} vibration=${channel?.enableVibration}',
       );
     }
   }
