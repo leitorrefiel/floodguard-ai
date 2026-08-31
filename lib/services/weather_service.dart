@@ -23,6 +23,7 @@ class WeatherForecastDay {
     required this.maxTemperatureCelsius,
     required this.minTemperatureCelsius,
     required this.precipitationMm,
+    this.precipitationProbabilityMax,
   });
 
   final String date;
@@ -30,6 +31,7 @@ class WeatherForecastDay {
   final double maxTemperatureCelsius;
   final double minTemperatureCelsius;
   final double precipitationMm;
+  final int? precipitationProbabilityMax;
 }
 
 class WeatherForecastResponse {
@@ -94,7 +96,7 @@ class WeatherService {
       'longitude': longitude.toString(),
       'current': 'temperature_2m,precipitation,rain,weather_code',
       'daily':
-          'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum',
+          'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max',
       'timezone': 'auto',
       'forecast_days': forecastDays.toString(),
     });
@@ -120,6 +122,8 @@ class WeatherService {
         (daily['temperature_2m_min'] as List<dynamic>?) ?? const [];
     final rainTotals =
         (daily['precipitation_sum'] as List<dynamic>?) ?? const [];
+    final rainChances =
+        (daily['precipitation_probability_max'] as List<dynamic>?) ?? const [];
     final dayCount = [
       dates.length,
       weatherCodes.length,
@@ -136,8 +140,7 @@ class WeatherService {
       current: WeatherSnapshot(
         temperatureCelsius:
             (current['temperature_2m'] as num?)?.toDouble() ?? 0,
-        precipitationMm:
-            (current['precipitation'] as num?)?.toDouble() ?? 0,
+        precipitationMm: (current['precipitation'] as num?)?.toDouble() ?? 0,
         rainMm: (current['rain'] as num?)?.toDouble() ?? 0,
         observedAt: current['time'] as String? ?? '',
       ),
@@ -149,6 +152,9 @@ class WeatherService {
           maxTemperatureCelsius: (maxTemps[index] as num?)?.toDouble() ?? 0,
           minTemperatureCelsius: (minTemps[index] as num?)?.toDouble() ?? 0,
           precipitationMm: (rainTotals[index] as num?)?.toDouble() ?? 0,
+          precipitationProbabilityMax: index < rainChances.length
+              ? (rainChances[index] as num?)?.toInt()
+              : null,
         ),
       ),
       endpoint: uri,
@@ -158,6 +164,7 @@ class WeatherService {
           'time': dates,
           'weather_code': weatherCodes,
           'precipitation_sum': rainTotals,
+          'precipitation_probability_max': rainChances,
         },
       }),
     );
