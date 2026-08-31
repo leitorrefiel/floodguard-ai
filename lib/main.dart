@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'screens/alerts_screen.dart';
+import 'screens/evacuation_centers_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/notification_service.dart';
@@ -21,16 +25,67 @@ Future<void> main() async {
 class FloodGuardApp extends StatelessWidget {
   const FloodGuardApp({super.key});
 
+  static final navigatorKey = GlobalKey<NavigatorState>();
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'FloodGuard AI',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       scrollBehavior: const AppScrollBehavior(),
-      home: const AuthGate(),
+      home: const _NotificationTapHandler(child: AuthGate()),
     );
   }
+}
+
+class _NotificationTapHandler extends StatefulWidget {
+  const _NotificationTapHandler({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_NotificationTapHandler> createState() =>
+      _NotificationTapHandlerState();
+}
+
+class _NotificationTapHandlerState extends State<_NotificationTapHandler> {
+  StreamSubscription<Map<String, dynamic>>? _subscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscription = NotificationService.instance.notificationTaps.listen(
+      _openNotificationTarget,
+    );
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  void _openNotificationTarget(Map<String, dynamic> data) {
+    final navigator = FloodGuardApp.navigatorKey.currentState;
+    if (navigator == null) return;
+    final reportId = data['report_id']?.toString();
+    if (reportId != null && reportId.isNotEmpty) {
+      navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => EvacuationCentersScreen(focusReportId: reportId),
+        ),
+      );
+      return;
+    }
+    navigator.push(
+      MaterialPageRoute<void>(builder: (_) => const AlertsScreen()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class AuthGate extends StatelessWidget {

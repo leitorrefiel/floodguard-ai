@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:geocoding/geocoding.dart';
 
 import '../models/hazard_report.dart';
@@ -45,10 +46,23 @@ class HazardMapService {
   ];
 
   Future<HazardMapData> load() async {
-    final reports = await _reportService.getReports();
+    final reports = await _reportService.getReports(
+      includeCommunityReports: true,
+    );
     final mappedReports = <MappedHazardReport>[];
 
-    for (final report in reports.take(20)) {
+    final visibleReports = reports.where(_isVisibleOnDevelopmentMap).toList();
+    debugPrint(
+      '[Hazard Map] loaded ${reports.length} reports from '
+      '${_reportService.storageLabel}; visible=${visibleReports.length}',
+    );
+
+    for (final report in visibleReports.take(20)) {
+      debugPrint(
+        '[Hazard Map] report id=${report.id} '
+        'status=${hazardReportStatusValue(report.status)} '
+        'type=${report.type.name} lat=${report.latitude} lng=${report.longitude}',
+      );
       final coordinate = await _coordinateForReport(report);
       if (coordinate == null) continue;
       mappedReports.add(
@@ -59,12 +73,33 @@ class HazardMapService {
     return HazardMapData(
       facilities: facilities,
       reports: mappedReports,
-      unmappedReportCount: reports.length - mappedReports.length,
+      unmappedReportCount: visibleReports.length - mappedReports.length,
       storageLabel: _reportService.storageLabel,
     );
   }
 
+  bool _isVisibleOnDevelopmentMap(HazardReport report) {
+    if (!report.hasCoordinate && report.location.trim().length < 3) {
+      return false;
+    }
+    if (report.expiresAt != null &&
+        report.expiresAt!.isBefore(DateTime.now())) {
+      return false;
+    }
+    return report.status == HazardReportStatus.pending ||
+        report.status == HazardReportStatus.highConfidence ||
+        report.status == HazardReportStatus.verified ||
+        report.status == HazardReportStatus.suspicious;
+  }
+
   Future<MapCoordinate?> _coordinateForReport(HazardReport report) async {
+    if (report.hasCoordinate) {
+      return MapCoordinate(
+        latitude: report.latitude!,
+        longitude: report.longitude!,
+      );
+    }
+
     final key = report.location.trim().toLowerCase();
     if (key.length < 3) return null;
     if (_geocodeCache.containsKey(key)) return _geocodeCache[key];

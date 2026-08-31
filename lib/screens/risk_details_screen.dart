@@ -4,7 +4,6 @@ import '../services/device_location_service.dart';
 import '../services/risk_service.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
-import 'evacuation_centers_screen.dart';
 
 class RiskDetailsScreen extends StatefulWidget {
   const RiskDetailsScreen({super.key});
@@ -177,7 +176,10 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
     const SizedBox(height: 12),
     Card(
       child: ListTile(
-        leading: Icon(Icons.warning_rounded, color: _riskColor(assessment.level)),
+        leading: Icon(
+          Icons.warning_rounded,
+          color: _riskColor(assessment.level),
+        ),
         title: Text('${assessment.level} Advisory'),
         subtitle: Text(assessment.summary),
       ),
@@ -231,21 +233,11 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
         children: [
           for (var index = 0; index < assessment.actions.length; index++) ...[
             _ActionTile(action: assessment.actions[index]),
-            if (index != assessment.actions.length - 1) const Divider(height: 1),
+            if (index != assessment.actions.length - 1)
+              const Divider(height: 1),
           ],
         ],
       ),
-    ),
-    const SizedBox(height: 16),
-    FilledButton.icon(
-      onPressed: () => Navigator.push(
-        context,
-        MaterialPageRoute<void>(
-          builder: (_) => const EvacuationCentersScreen(),
-        ),
-      ),
-      icon: const Icon(Icons.home_work_outlined),
-      label: const Text('View Evacuation Centers'),
     ),
   ];
 
@@ -271,10 +263,7 @@ class _ActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListTile(
-    leading: Icon(
-      _iconFor(action.iconKey),
-      color: AppTheme.blue,
-    ),
+    leading: Icon(_iconFor(action.iconKey), color: AppTheme.blue),
     title: Text(action.title),
     subtitle: Text(action.description),
   );

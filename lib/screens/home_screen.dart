@@ -1,14 +1,20 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../models/hazard_report.dart';
+import '../models/map_hazard.dart';
 import '../services/device_location_service.dart';
+import '../services/hazard_map_service.dart';
+import '../services/hazard_report_service.dart';
 import '../services/risk_service.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
 import '../widgets/metric_tile.dart';
 import 'alerts_screen.dart';
+import 'community_reports_screen.dart';
 import 'evacuation_centers_screen.dart';
 import 'report_hazard_screen.dart';
 import 'risk_details_screen.dart';
@@ -25,28 +31,40 @@ class _HomeScreenState extends State<HomeScreen> {
   final _locationService = DeviceLocationService();
   final _weatherService = WeatherService();
   final _riskService = const RiskService();
+  final _hazardMapService = HazardMapService();
+  final _reportService = HazardReportService();
+  DeviceLocation? _currentLocation;
   String _locationLabel = 'Tap to set your location';
   String? _coordinates;
   RiskAssessment? _riskAssessment;
+  _AreaStatus? _areaStatus;
+  List<HazardReport> _recentCommunityReports = const [];
   String? _riskError;
+  String? _areaStatusError;
+  String? _recentReportsError;
   bool _isLoadingLocation = false;
   bool _isLoadingRisk = false;
+  bool _isLoadingAreaStatus = false;
+  bool _isLoadingRecentReports = true;
 
   @override
   void initState() {
     super.initState();
     _restoreLastLocation();
+    _loadRecentCommunityReports();
   }
 
   Future<void> _restoreLastLocation() async {
     final location = await _locationService.getSavedLocation();
     if (!mounted || location == null) return;
     setState(() {
+      _currentLocation = location;
       _locationLabel = location.label;
       _coordinates =
           '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
     });
     _loadRiskFor(location);
+    _loadAreaStatusFor(location);
   }
 
   @override
@@ -182,23 +200,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                leading: Icon(
-                  Icons.warning_amber_rounded,
-                  color: _riskColor(risk?.level),
-                ),
-                title: Text(risk == null ? 'Flood Watch' : '${risk.level} Watch'),
-                subtitle: Text(
-                  risk?.summary ??
-                      'Set your location to load live rainfall advisories.',
-                ),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(builder: (_) => const AlertsScreen()),
-                ),
-              ),
-            ),
+            _areaStatusCard(),
             const SizedBox(height: 18),
             Text(
               'Quick Actions',
@@ -219,7 +221,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   context,
                   Icons.home_work_outlined,
                   'Evacuation\nCenters',
-                  const EvacuationCentersScreen(),
+                  const EvacuationCentersScreen(
+                    initialMode: HazardMapInitialMode.facilities,
+                  ),
                 ),
                 _quickAction(
                   context,
@@ -249,7 +253,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () => Navigator.push(
                     context,
                     MaterialPageRoute<void>(
-                      builder: (_) => const AlertsScreen(),
+                      builder: (_) => const CommunityReportsScreen(),
                     ),
                   ),
                   child: const Text('View all'),
@@ -257,40 +261,35 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            Card(
-              child: ListTile(
-                leading: CircleAvatar(
-                  child: Icon(Icons.directions_car_filled_outlined),
-                ),
-                title: Text('Flooded Road'),
-                subtitle: Text('Baliwag, Bulacan - Today, 8:45 AM'),
-                trailing: Chip(label: Text('Verified')),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => const ReportHazardScreen(),
-                  ),
-                ),
-              ),
-            ),
-            Card(
-              child: ListTile(
-                leading: CircleAvatar(child: Icon(Icons.water_damage_outlined)),
-                title: Text('Blocked Drainage'),
-                subtitle: Text('Baliwag, Bulacan - Today, 7:30 AM'),
-                trailing: Chip(label: Text('Verified')),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => const ReportHazardScreen(),
-                  ),
-                ),
-              ),
-            ),
+            _recentCommunityReportsPreview(),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _loadRecentCommunityReports() async {
+    setState(() {
+      _isLoadingRecentReports = true;
+      _recentReportsError = null;
+    });
+    try {
+      final reports = await _reportService.getReports(
+        includeCommunityReports: true,
+      );
+      final visibleReports = reports.where((report) => report.isActive).toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      if (!mounted) return;
+      setState(() => _recentCommunityReports = visibleReports.take(3).toList());
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _recentCommunityReports = const [];
+        _recentReportsError = 'Recent community reports are unavailable.';
+      });
+    } finally {
+      if (mounted) setState(() => _isLoadingRecentReports = false);
+    }
   }
 
   Future<void> _refreshLocation() async {
@@ -324,11 +323,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _setLocation(DeviceLocation location) {
     setState(() {
+      _currentLocation = location;
       _locationLabel = location.label;
       _coordinates =
           '${location.latitude.toStringAsFixed(5)} deg N, ${location.longitude.toStringAsFixed(5)} deg E';
     });
     _loadRiskFor(location);
+    _loadAreaStatusFor(location);
   }
 
   Future<void> _loadRiskFor(DeviceLocation location) async {
@@ -359,6 +360,88 @@ class _HomeScreenState extends State<HomeScreen> {
     } finally {
       if (mounted) setState(() => _isLoadingRisk = false);
     }
+  }
+
+  Future<void> _loadAreaStatusFor(DeviceLocation location) async {
+    setState(() {
+      _isLoadingAreaStatus = true;
+      _areaStatusError = null;
+    });
+
+    try {
+      final data = await _hazardMapService.load();
+      if (!mounted || _currentLocation != location) return;
+      setState(() => _areaStatus = _buildAreaStatus(location, data));
+    } catch (_) {
+      if (!mounted || _currentLocation != location) return;
+      setState(() {
+        _areaStatus = null;
+        _areaStatusError = 'No mapped reports currently available.';
+      });
+    } finally {
+      if (mounted && _currentLocation == location) {
+        setState(() => _isLoadingAreaStatus = false);
+      }
+    }
+  }
+
+  _AreaStatus _buildAreaStatus(DeviceLocation location, HazardMapData data) {
+    const nearbyRadiusMeters = 5000.0;
+    final origin = MapCoordinate(
+      latitude: location.latitude,
+      longitude: location.longitude,
+    );
+    final nearbyReports = data.reports.where((item) {
+      return _distanceMeters(origin, item.coordinate) <= nearbyRadiusMeters;
+    });
+    final floodReports = nearbyReports.where(
+      (item) => item.report.type == HazardType.floodedRoad,
+    );
+    final floodCount = floodReports.length;
+    final hazardCount = nearbyReports.length - floodCount;
+
+    EmergencyFacility? nearestFacility;
+    var nearestDistance = double.infinity;
+    for (final facility in data.facilities) {
+      final distance = _distanceMeters(origin, facility.coordinate);
+      if (distance < nearestDistance) {
+        nearestFacility = facility;
+        nearestDistance = distance;
+      }
+    }
+
+    return _AreaStatus(
+      floodReports: floodCount,
+      hazardReports: hazardCount,
+      nearestFacilityDistance: nearestFacility == null
+          ? null
+          : _formatDistance(nearestDistance),
+      storageLabel: data.storageLabel,
+    );
+  }
+
+  double _distanceMeters(MapCoordinate a, MapCoordinate b) {
+    const earthRadiusMeters = 6371000.0;
+    final lat1 = _radians(a.latitude);
+    final lat2 = _radians(b.latitude);
+    final deltaLat = _radians(b.latitude - a.latitude);
+    final deltaLng = _radians(b.longitude - a.longitude);
+    final haversine =
+        math.sin(deltaLat / 2) * math.sin(deltaLat / 2) +
+        math.cos(lat1) *
+            math.cos(lat2) *
+            math.sin(deltaLng / 2) *
+            math.sin(deltaLng / 2);
+    return earthRadiusMeters *
+        2 *
+        math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine));
+  }
+
+  double _radians(double degrees) => degrees * math.pi / 180;
+
+  String _formatDistance(double meters) {
+    if (meters < 1000) return '${meters.round()} m';
+    return '${(meters / 1000).toStringAsFixed(1)} km';
   }
 
   Color _riskColor(String? level) {
@@ -428,6 +511,56 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   );
 
+  Widget _areaStatusCard() {
+    final status = _areaStatus;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.radar_outlined, color: AppTheme.blue),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Current Area Status',
+                    style: TextStyle(
+                      color: AppTheme.ink,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  if (_currentLocation == null)
+                    const Text('Set your location to summarize nearby reports.')
+                  else if (_isLoadingAreaStatus)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4, right: 32),
+                      child: LinearProgressIndicator(minHeight: 3),
+                    )
+                  else if (_areaStatusError != null)
+                    Text(_areaStatusError!)
+                  else if (status != null) ...[
+                    Text(status.floodLine),
+                    const SizedBox(height: 2),
+                    Text(status.hazardLine),
+                    if (status.facilityLine != null) ...[
+                      const SizedBox(height: 2),
+                      Text(status.facilityLine!),
+                    ],
+                  ] else
+                    const Text('No mapped reports currently available.'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _quickAction(
     BuildContext context,
     IconData icon,
@@ -467,6 +600,139 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ),
   );
+
+  Widget _recentCommunityReportsPreview() {
+    if (_isLoadingRecentReports) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: LinearProgressIndicator(minHeight: 4),
+        ),
+      );
+    }
+    if (_recentReportsError != null) {
+      return Card(
+        child: ListTile(
+          leading: const Icon(Icons.info_outline, color: AppTheme.blue),
+          title: Text(_recentReportsError!),
+          subtitle: const Text('Try refreshing the Home screen later.'),
+        ),
+      );
+    }
+    if (_recentCommunityReports.isEmpty) {
+      return const Card(
+        child: ListTile(
+          leading: Icon(Icons.map_outlined, color: AppTheme.blue),
+          title: Text('No recent community reports'),
+          subtitle: Text('Submitted hazard reports will appear here.'),
+        ),
+      );
+    }
+    return Column(
+      children: _recentCommunityReports.map(_recentReportCard).toList(),
+    );
+  }
+
+  Widget _recentReportCard(HazardReport report) => Card(
+    child: ListTile(
+      leading: CircleAvatar(
+        backgroundColor: _hazardColor(report.type).withValues(alpha: .12),
+        child: Icon(_hazardIcon(report.type), color: _hazardColor(report.type)),
+      ),
+      title: Text(
+        report.displayType,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w800),
+      ),
+      subtitle: Text(
+        '${_shortLocation(report.location)}\n${_formatReportTime(report.createdAt)}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      isThreeLine: true,
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => EvacuationCentersScreen(focusReportId: report.id),
+        ),
+      ),
+    ),
+  );
+
+  String _shortLocation(String location) {
+    final parts = location
+        .split(',')
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .toList();
+    if (parts.isEmpty) return 'Pinned location';
+    return parts.join(', ');
+  }
+
+  String _formatReportTime(DateTime createdAt) {
+    final now = DateTime.now();
+    final difference = now.difference(createdAt);
+    if (difference.inMinutes < 1) return 'Just now';
+    if (difference.inMinutes < 60) {
+      return '${difference.inMinutes} min ago';
+    }
+    if (difference.inHours < 24) return '${difference.inHours} hr ago';
+    final hour = createdAt.hour % 12 == 0 ? 12 : createdAt.hour % 12;
+    final minute = createdAt.minute.toString().padLeft(2, '0');
+    final period = createdAt.hour >= 12 ? 'PM' : 'AM';
+    return '${createdAt.month}/${createdAt.day}/${createdAt.year}, $hour:$minute $period';
+  }
+
+  IconData _hazardIcon(HazardType type) => switch (type) {
+    HazardType.floodedRoad => Icons.water_damage_outlined,
+    HazardType.cloggedDrainage => Icons.water_drop_outlined,
+    HazardType.blockedWaterway => Icons.waves_outlined,
+    HazardType.overflowingCanal => Icons.flood_outlined,
+    HazardType.roadObstruction => Icons.traffic_outlined,
+    HazardType.damagedDrainage => Icons.construction_outlined,
+    HazardType.other => Icons.warning_amber_outlined,
+  };
+
+  Color _hazardColor(HazardType type) => switch (type) {
+    HazardType.floodedRoad || HazardType.overflowingCanal => AppTheme.blue,
+    HazardType.cloggedDrainage ||
+    HazardType.blockedWaterway ||
+    HazardType.damagedDrainage => const Color(0xFFF97316),
+    HazardType.roadObstruction || HazardType.other => const Color(0xFFDC2626),
+  };
+}
+
+class _AreaStatus {
+  const _AreaStatus({
+    required this.floodReports,
+    required this.hazardReports,
+    required this.nearestFacilityDistance,
+    required this.storageLabel,
+  });
+
+  final int floodReports;
+  final int hazardReports;
+  final String? nearestFacilityDistance;
+  final String storageLabel;
+
+  String get floodLine {
+    if (floodReports == 0) return 'No active flood reports nearby.';
+    final label = floodReports == 1 ? 'location' : 'locations';
+    return '$floodReports reported flooded $label nearby.';
+  }
+
+  String get hazardLine {
+    final label = hazardReports == 1 ? 'hazard' : 'hazards';
+    return '$hazardReports community $label reported nearby.';
+  }
+
+  String? get facilityLine {
+    final distance = nearestFacilityDistance;
+    if (distance == null) return null;
+    return 'Nearest safety facility: $distance.';
+  }
 }
 
 class _LocationPickerSheet extends StatefulWidget {
@@ -636,14 +902,14 @@ class _LocationPickerSheetState extends State<_LocationPickerSheet> {
                             ),
                           )
                         : _search.text.isEmpty
-                            ? null
-                            : IconButton(
-                                onPressed: () {
-                                  _search.clear();
-                                  _queueSearch('');
-                                },
-                                icon: const Icon(Icons.close),
-                              ),
+                        ? null
+                        : IconButton(
+                            onPressed: () {
+                              _search.clear();
+                              _queueSearch('');
+                            },
+                            icon: const Icon(Icons.close),
+                          ),
                   ),
                   onChanged: _queueSearch,
                 ),
