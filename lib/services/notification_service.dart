@@ -26,7 +26,7 @@ class NotificationService {
   static const _channelId = 'floodguard_alerts_v2';
   static const _channelName = 'FloodGuard Alerts';
   static const _channelDescription = 'Flood and hazard safety notifications';
-  static const _notificationIcon = '@drawable/ic_floodguard_notification';
+  static const _notificationIcon = 'ic_floodguard_notification';
   static const _largeNotificationIcon = 'ic_floodguard_app_icon';
   static final _vibrationPattern = Int64List.fromList([0, 350, 160, 350]);
 
@@ -152,7 +152,7 @@ class NotificationService {
   }
 
   Future<void> showDemoFloodWatch() => showFloodAlert(
-    id: 1001,
+    id: DateTime.now().millisecondsSinceEpoch.remainder(1000000),
     title: _floodWatchTemplate.title,
     body: _floodWatchTemplate.body,
     expandedBody: _floodWatchTemplate.expandedBody,
