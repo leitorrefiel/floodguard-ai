@@ -34,16 +34,36 @@ class WeatherForecastDay {
   final int? precipitationProbabilityMax;
 }
 
+class WeatherForecastHour {
+  const WeatherForecastHour({
+    required this.time,
+    required this.temperatureCelsius,
+    required this.precipitationMm,
+    required this.rainMm,
+    required this.weatherCode,
+    this.precipitationProbability,
+  });
+
+  final String time;
+  final double temperatureCelsius;
+  final double precipitationMm;
+  final double rainMm;
+  final int weatherCode;
+  final int? precipitationProbability;
+}
+
 class WeatherForecastResponse {
   const WeatherForecastResponse({
     required this.current,
     required this.days,
+    this.hours = const [],
     required this.endpoint,
     required this.jsonSample,
   });
 
   final WeatherSnapshot current;
   final List<WeatherForecastDay> days;
+  final List<WeatherForecastHour> hours;
   final Uri endpoint;
   final String jsonSample;
 }
@@ -95,6 +115,8 @@ class WeatherService {
       'latitude': latitude.toString(),
       'longitude': longitude.toString(),
       'current': 'temperature_2m,precipitation,rain,weather_code',
+      'hourly':
+          'temperature_2m,precipitation,precipitation_probability,rain,weather_code',
       'daily':
           'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max',
       'timezone': 'auto',
@@ -110,7 +132,8 @@ class WeatherService {
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final current = data['current'] as Map<String, dynamic>?;
     final daily = data['daily'] as Map<String, dynamic>?;
-    if (current == null || daily == null) {
+    final hourly = data['hourly'] as Map<String, dynamic>?;
+    if (current == null || daily == null || hourly == null) {
       throw const WeatherException('Forecast returned incomplete data.');
     }
 
@@ -136,6 +159,47 @@ class WeatherService {
       throw const WeatherException('Forecast returned no daily results.');
     }
 
+    final hourlyTimes = (hourly['time'] as List<dynamic>?) ?? const [];
+    final hourlyTemps =
+        (hourly['temperature_2m'] as List<dynamic>?) ?? const [];
+    final hourlyPrecipitation =
+        (hourly['precipitation'] as List<dynamic>?) ?? const [];
+    final hourlyRain = (hourly['rain'] as List<dynamic>?) ?? const [];
+    final hourlyWeatherCodes =
+        (hourly['weather_code'] as List<dynamic>?) ?? const [];
+    final hourlyRainChances =
+        (hourly['precipitation_probability'] as List<dynamic>?) ?? const [];
+    final hourCount = [
+      hourlyTimes.length,
+      hourlyTemps.length,
+      hourlyPrecipitation.length,
+      hourlyRain.length,
+      hourlyWeatherCodes.length,
+    ].reduce((value, element) => value < element ? value : element);
+    final now = DateTime.now();
+    final upcomingHours =
+        List.generate(
+              hourCount,
+              (index) => WeatherForecastHour(
+                time: hourlyTimes[index] as String,
+                temperatureCelsius:
+                    (hourlyTemps[index] as num?)?.toDouble() ?? 0,
+                precipitationMm:
+                    (hourlyPrecipitation[index] as num?)?.toDouble() ?? 0,
+                rainMm: (hourlyRain[index] as num?)?.toDouble() ?? 0,
+                weatherCode: (hourlyWeatherCodes[index] as num?)?.toInt() ?? 0,
+                precipitationProbability: index < hourlyRainChances.length
+                    ? (hourlyRainChances[index] as num?)?.toInt()
+                    : null,
+              ),
+            )
+            .where((hour) {
+              final parsed = DateTime.tryParse(hour.time);
+              return parsed != null && !parsed.isBefore(now);
+            })
+            .take(6)
+            .toList();
+
     return WeatherForecastResponse(
       current: WeatherSnapshot(
         temperatureCelsius:
@@ -157,9 +221,17 @@ class WeatherService {
               : null,
         ),
       ),
+      hours: upcomingHours,
       endpoint: uri,
       jsonSample: const JsonEncoder.withIndent('  ').convert({
         'current': data['current'],
+        'hourly': {
+          'time': hourlyTimes.take(6).toList(),
+          'precipitation': hourlyPrecipitation.take(6).toList(),
+          'precipitation_probability': hourlyRainChances.take(6).toList(),
+          'rain': hourlyRain.take(6).toList(),
+          'weather_code': hourlyWeatherCodes.take(6).toList(),
+        },
         'daily': {
           'time': dates,
           'weather_code': weatherCodes,
