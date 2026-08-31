@@ -26,6 +26,7 @@ class NotificationService {
   static const _channelId = 'floodguard_alerts_v2';
   static const _channelName = 'FloodGuard Alerts';
   static const _channelDescription = 'Flood and hazard safety notifications';
+  static const _notificationIcon = '@drawable/ic_stat_floodguard';
   static final _vibrationPattern = Int64List.fromList([0, 350, 160, 350]);
 
   final _notifications = FlutterLocalNotificationsPlugin();
@@ -39,7 +40,7 @@ class NotificationService {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     await _notifications.initialize(
       settings: const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        android: AndroidInitializationSettings(_notificationIcon),
       ),
       onDidReceiveNotificationResponse: (response) {
         final payload = response.payload;
@@ -102,6 +103,7 @@ class NotificationService {
           _channelId,
           _channelName,
           channelDescription: _channelDescription,
+          icon: _notificationIcon,
           importance: Importance.max,
           priority: Priority.max,
           styleInformation: BigTextStyleInformation(
