@@ -122,7 +122,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await _refreshAvatarUrl(effectiveProfile.avatarPath);
       _message('Profile updated.');
     } on StorageException catch (error) {
-      debugPrint('Profile photo upload unavailable: ${error.message}');
+      debugPrint('Profile photo upload unavailable: $error');
+      if (!mounted) return;
+      _message('Could not upload profile photo. Please try again.');
+    } on io.FileSystemException catch (error) {
+      debugPrint('Profile photo file unavailable: ${error.message}');
       if (!mounted) return;
       _message('Could not upload profile photo. Please try again.');
     } catch (error) {
@@ -250,19 +254,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
       includeAvatar ? 'display_name, avatar_path' : 'display_name';
 
   Future<String> _uploadAvatar(String userId, String imagePath) async {
-    final extension = _avatarExtension(imagePath);
-    final path = '$userId/avatar.$extension';
+    final file = io.File(imagePath);
+    final exists = await file.exists();
+    final path = '$userId/avatar.jpg';
+    debugPrint(
+      '[Profile Avatar] pickerPath=$imagePath exists=$exists '
+      'bucket=$_avatarBucket uploadPath=$path userId=$userId',
+    );
+    if (!exists) {
+      throw const io.FileSystemException('Selected profile photo not found.');
+    }
+    if (!path.startsWith('$userId/')) {
+      throw StateError('Profile avatar path must begin with auth.uid().');
+    }
     await _client.storage
         .from(_avatarBucket)
         .upload(
           path,
-          io.File(imagePath),
-          fileOptions: FileOptions(
+          file,
+          fileOptions: const FileOptions(
             cacheControl: '3600',
-            contentType: _avatarContentType(extension),
+            contentType: 'image/jpeg',
             upsert: true,
           ),
         );
+    debugPrint('[Profile Avatar] upload success: $_avatarBucket/$path');
     return path;
   }
 
@@ -271,7 +287,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       await _client.storage.from(_avatarBucket).remove([path]);
     } on StorageException catch (error) {
-      debugPrint('Profile avatar removal unavailable: ${error.message}');
+      debugPrint('Profile avatar removal unavailable: $error');
     }
   }
 
@@ -285,6 +301,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final url = await _client.storage
           .from(_avatarBucket)
           .createSignedUrl(avatarPath, 60 * 60);
+      debugPrint('[Profile Avatar] signed URL created for $avatarPath');
       if (!mounted) return;
       setState(() => _avatarUrl = url);
     } catch (error) {
@@ -373,21 +390,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   bool _isNoRows(Object error) =>
       error is PostgrestException && error.message.contains('PGRST116');
-
-  String _avatarExtension(String path) {
-    final extension = path.split('.').last.toLowerCase();
-    return switch (extension) {
-      'png' => 'png',
-      'webp' => 'webp',
-      _ => 'jpg',
-    };
-  }
-
-  String _avatarContentType(String extension) => switch (extension) {
-    'png' => 'image/png',
-    'webp' => 'image/webp',
-    _ => 'image/jpeg',
-  };
 
   void _message(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
