@@ -40,14 +40,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
 
     try {
-      final data = await _client
-          .from('profiles')
-          .select('display_name, phone_number')
-          .eq('id', user.id)
-          .maybeSingle();
-      if (data != null) details = _ProfileDetails.fromJson(data);
-    } catch (_) {
-      // Use auth metadata when profile details are unavailable.
+      details = await _ensureProfile(user, fallback: details);
+    } catch (error) {
+      debugPrint('Profile load unavailable: $error');
     }
 
     if (!mounted) return;
@@ -80,22 +75,145 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     setState(() => _isSavingProfile = true);
     try {
-      await _client.from('profiles').upsert({
-        'id': user.id,
-        'display_name': details.displayName,
-        'phone_number': details.phoneNumber,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }, onConflict: 'id');
+      final savedProfile = await _saveProfileRecord(user, details);
       if (!mounted) return;
-      setState(() => _profile = details);
+      setState(() => _profile = savedProfile);
       _message('Profile updated.');
-    } catch (_) {
+    } catch (error) {
+      debugPrint('Profile save unavailable: $error');
       if (!mounted) return;
       _message('Profile editing is unavailable right now.');
     } finally {
       if (mounted) setState(() => _isSavingProfile = false);
     }
   }
+
+  Future<_ProfileDetails> _ensureProfile(
+    User user, {
+    required _ProfileDetails fallback,
+  }) async {
+    final existing = await _fetchProfile(user.id);
+    if (existing != null) return existing;
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final values = <String, Object?>{
+      'id': user.id,
+      'display_name': fallback.displayName.isEmpty
+          ? null
+          : fallback.displayName,
+      'phone_number': fallback.phoneNumber.isEmpty
+          ? null
+          : fallback.phoneNumber,
+      'created_at': now,
+      'updated_at': now,
+    };
+    final data = await _insertProfile(values);
+
+    return _ProfileDetails.fromJson(data);
+  }
+
+  Future<_ProfileDetails?> _fetchProfile(String userId) async {
+    Map<String, dynamic>? data;
+    try {
+      data = await _client
+          .from('profiles')
+          .select('display_name, phone_number')
+          .eq('id', userId)
+          .maybeSingle();
+    } catch (error) {
+      if (_missingColumn(error) != 'phone_number') rethrow;
+      data = await _client
+          .from('profiles')
+          .select('display_name')
+          .eq('id', userId)
+          .maybeSingle();
+    }
+    return data == null ? null : _ProfileDetails.fromJson(data);
+  }
+
+  Future<_ProfileDetails> _saveProfileRecord(
+    User user,
+    _ProfileDetails details,
+  ) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final values = {
+      'display_name': details.displayName.isEmpty ? null : details.displayName,
+      'phone_number': details.phoneNumber.isEmpty ? null : details.phoneNumber,
+      'updated_at': now,
+    };
+
+    final updated = await _updateProfile(user.id, values);
+    if (updated != null) return _ProfileDetails.fromJson(updated);
+
+    final inserted = await _insertProfile({
+      'id': user.id,
+      ...values,
+      'created_at': now,
+    });
+    return _ProfileDetails.fromJson(inserted);
+  }
+
+  Future<Map<String, dynamic>?> _updateProfile(
+    String userId,
+    Map<String, Object?> values,
+  ) async {
+    final compatibleValues = Map<String, Object?>.from(values);
+    var includePhone = true;
+
+    while (true) {
+      try {
+        return await _client
+            .from('profiles')
+            .update(compatibleValues)
+            .eq('id', userId)
+            .select(_profileSelect(includePhone))
+            .maybeSingle();
+      } catch (error) {
+        if (_isNoRows(error)) return null;
+        final missingColumn = _missingColumn(error);
+        if (missingColumn == null) rethrow;
+        if (missingColumn == 'phone_number') includePhone = false;
+        if (!compatibleValues.containsKey(missingColumn)) rethrow;
+        compatibleValues.remove(missingColumn);
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _insertProfile(
+    Map<String, Object?> values,
+  ) async {
+    final compatibleValues = Map<String, Object?>.from(values);
+    var includePhone = true;
+
+    while (true) {
+      try {
+        return await _client
+            .from('profiles')
+            .insert(compatibleValues)
+            .select(_profileSelect(includePhone))
+            .single();
+      } catch (error) {
+        final missingColumn = _missingColumn(error);
+        if (missingColumn == null) rethrow;
+        if (missingColumn == 'phone_number') includePhone = false;
+        if (!compatibleValues.containsKey(missingColumn)) rethrow;
+        compatibleValues.remove(missingColumn);
+      }
+    }
+  }
+
+  String _profileSelect(bool includePhone) =>
+      includePhone ? 'display_name, phone_number' : 'display_name';
+
+  String? _missingColumn(Object error) {
+    if (error is! PostgrestException) return null;
+    return RegExp(
+      "Could not find the '([^']+)' column",
+    ).firstMatch(error.message)?.group(1);
+  }
+
+  bool _isNoRows(Object error) =>
+      error is PostgrestException && error.message.contains('PGRST116');
 
   void _message(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
