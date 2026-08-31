@@ -1,4 +1,7 @@
+import 'dart:io' as io;
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/app_theme.dart';
@@ -13,12 +16,16 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   static const _maxDisplayNameLength = 60;
+  static const _avatarBucket = 'profile-pictures';
 
   final _client = Supabase.instance.client;
+  final _imagePicker = ImagePicker();
 
   _ProfileDetails _profile = const _ProfileDetails();
+  String? _avatarUrl;
   bool _isLoadingProfile = true;
   bool _isSavingProfile = false;
+  bool _isUpdatingAccount = false;
 
   @override
   void initState() {
@@ -36,7 +43,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final metadata = user.userMetadata ?? const <String, dynamic>{};
     var details = _ProfileDetails(
       displayName: _text(metadata['display_name'] ?? metadata['full_name']),
-      phoneNumber: _text(metadata['phone_number'] ?? metadata['phone']),
+      avatarPath: _text(metadata['avatar_path'] ?? metadata['avatar_url']),
     );
 
     try {
@@ -50,23 +57,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _profile = details;
       _isLoadingProfile = false;
     });
+    await _refreshAvatarUrl(details.avatarPath);
   }
 
   Future<void> _editProfile() async {
-    final result = await showModalBottomSheet<_ProfileDetails>(
+    final result = await showModalBottomSheet<_ProfileEditResult>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (context) => _EditProfileSheet(
         initialProfile: _profile,
         maxDisplayNameLength: _maxDisplayNameLength,
+        imagePicker: _imagePicker,
+        avatarUrl: _avatarUrl,
       ),
     );
     if (result == null) return;
     await _saveProfile(result);
   }
 
-  Future<void> _saveProfile(_ProfileDetails details) async {
+  Future<void> _saveProfile(_ProfileEditResult edit) async {
     final user = _client.auth.currentUser;
     if (user == null) {
       _message('Sign in to update your profile.');
@@ -75,9 +85,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     setState(() => _isSavingProfile = true);
     try {
+      var avatarPath = _profile.avatarPath;
+      if (edit.removeAvatar) {
+        await _removeAvatar(user.id, avatarPath);
+        avatarPath = '';
+      }
+      if (edit.selectedImagePath != null) {
+        avatarPath = await _uploadAvatar(user.id, edit.selectedImagePath!);
+      }
+      final details = _ProfileDetails(
+        displayName: edit.displayName,
+        avatarPath: avatarPath,
+      );
       final savedProfile = await _saveProfileRecord(user, details);
       if (!mounted) return;
       setState(() => _profile = savedProfile);
+      await _refreshAvatarUrl(savedProfile.avatarPath);
       _message('Profile updated.');
     } catch (error) {
       debugPrint('Profile save unavailable: $error');
@@ -101,9 +124,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'display_name': fallback.displayName.isEmpty
           ? null
           : fallback.displayName,
-      'phone_number': fallback.phoneNumber.isEmpty
-          ? null
-          : fallback.phoneNumber,
+      'avatar_path': fallback.avatarPath.isEmpty ? null : fallback.avatarPath,
       'created_at': now,
       'updated_at': now,
     };
@@ -117,11 +138,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       data = await _client
           .from('profiles')
-          .select('display_name, phone_number')
+          .select('display_name, avatar_path')
           .eq('id', userId)
           .maybeSingle();
     } catch (error) {
-      if (_missingColumn(error) != 'phone_number') rethrow;
+      if (_missingColumn(error) != 'avatar_path') rethrow;
       data = await _client
           .from('profiles')
           .select('display_name')
@@ -138,7 +159,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final now = DateTime.now().toUtc().toIso8601String();
     final values = {
       'display_name': details.displayName.isEmpty ? null : details.displayName,
-      'phone_number': details.phoneNumber.isEmpty ? null : details.phoneNumber,
+      'avatar_path': details.avatarPath.isEmpty ? null : details.avatarPath,
       'updated_at': now,
     };
 
@@ -158,7 +179,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     Map<String, Object?> values,
   ) async {
     final compatibleValues = Map<String, Object?>.from(values);
-    var includePhone = true;
+    var includeAvatar = true;
 
     while (true) {
       try {
@@ -166,13 +187,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             .from('profiles')
             .update(compatibleValues)
             .eq('id', userId)
-            .select(_profileSelect(includePhone))
+            .select(_profileSelect(includeAvatar))
             .maybeSingle();
       } catch (error) {
         if (_isNoRows(error)) return null;
         final missingColumn = _missingColumn(error);
         if (missingColumn == null) rethrow;
-        if (missingColumn == 'phone_number') includePhone = false;
+        if (missingColumn == 'avatar_path') includeAvatar = false;
         if (!compatibleValues.containsKey(missingColumn)) rethrow;
         compatibleValues.remove(missingColumn);
       }
@@ -183,27 +204,119 @@ class _ProfileScreenState extends State<ProfileScreen> {
     Map<String, Object?> values,
   ) async {
     final compatibleValues = Map<String, Object?>.from(values);
-    var includePhone = true;
+    var includeAvatar = true;
 
     while (true) {
       try {
         return await _client
             .from('profiles')
             .insert(compatibleValues)
-            .select(_profileSelect(includePhone))
+            .select(_profileSelect(includeAvatar))
             .single();
       } catch (error) {
         final missingColumn = _missingColumn(error);
         if (missingColumn == null) rethrow;
-        if (missingColumn == 'phone_number') includePhone = false;
+        if (missingColumn == 'avatar_path') includeAvatar = false;
         if (!compatibleValues.containsKey(missingColumn)) rethrow;
         compatibleValues.remove(missingColumn);
       }
     }
   }
 
-  String _profileSelect(bool includePhone) =>
-      includePhone ? 'display_name, phone_number' : 'display_name';
+  String _profileSelect(bool includeAvatar) =>
+      includeAvatar ? 'display_name, avatar_path' : 'display_name';
+
+  Future<String> _uploadAvatar(String userId, String imagePath) async {
+    final path = '$userId/avatar.jpg';
+    await _client.storage
+        .from(_avatarBucket)
+        .upload(
+          path,
+          io.File(imagePath),
+          fileOptions: const FileOptions(
+            cacheControl: '3600',
+            contentType: 'image/jpeg',
+            upsert: true,
+          ),
+        );
+    return path;
+  }
+
+  Future<void> _removeAvatar(String userId, String avatarPath) async {
+    final path = avatarPath.isEmpty ? '$userId/avatar.jpg' : avatarPath;
+    try {
+      await _client.storage.from(_avatarBucket).remove([path]);
+    } on StorageException catch (error) {
+      debugPrint('Profile avatar removal unavailable: ${error.message}');
+    }
+  }
+
+  Future<void> _refreshAvatarUrl(String avatarPath) async {
+    if (avatarPath.isEmpty) {
+      if (!mounted) return;
+      setState(() => _avatarUrl = null);
+      return;
+    }
+    try {
+      final url = await _client.storage
+          .from(_avatarBucket)
+          .createSignedUrl(avatarPath, 60 * 60);
+      if (!mounted) return;
+      setState(() => _avatarUrl = url);
+    } catch (error) {
+      debugPrint('Profile avatar load unavailable: $error');
+      if (!mounted) return;
+      setState(() => _avatarUrl = null);
+    }
+  }
+
+  Future<void> _changeEmail() async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _ChangeEmailSheet(
+        currentEmail: _client.auth.currentUser?.email ?? '',
+      ),
+    );
+    if (result == null) return;
+
+    setState(() => _isUpdatingAccount = true);
+    try {
+      await _client.auth.updateUser(UserAttributes(email: result));
+      _message('Check your new email address to confirm the change.');
+    } on AuthException catch (error) {
+      _message(error.message);
+    } catch (error) {
+      debugPrint('Email update unavailable: $error');
+      _message('Email update is unavailable right now.');
+    } finally {
+      if (mounted) setState(() => _isUpdatingAccount = false);
+    }
+  }
+
+  Future<void> _changePassword() async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => const _ChangePasswordSheet(),
+    );
+    if (result == null) return;
+
+    setState(() => _isUpdatingAccount = true);
+    try {
+      await _client.auth.updateUser(UserAttributes(password: result));
+      _message('Password updated successfully.');
+    } on AuthException catch (error) {
+      _message(error.message);
+    } catch (error) {
+      debugPrint('Password update unavailable: $error');
+      _message('Password update is unavailable right now.');
+    } finally {
+      if (mounted) setState(() => _isUpdatingAccount = false);
+    }
+  }
 
   String? _missingColumn(Object error) {
     if (error is! PostgrestException) return null;
@@ -266,11 +379,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
                 child: Column(
                   children: [
-                    const CircleAvatar(
-                      radius: 48,
-                      backgroundColor: AppTheme.paleBlue,
-                      child: Icon(Icons.person, size: 52, color: AppTheme.blue),
-                    ),
+                    _ProfileAvatar(avatarUrl: _avatarUrl, radius: 48),
                     const SizedBox(height: 18),
                     if (_isLoadingProfile)
                       const SizedBox(
@@ -315,6 +424,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
             const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 6),
+                      child: Text(
+                        'Account Security',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    _SecurityActionRow(
+                      icon: Icons.email_outlined,
+                      title: 'Change Email',
+                      onTap: _isUpdatingAccount ? null : _changeEmail,
+                    ),
+                    _SecurityActionRow(
+                      icon: Icons.lock_outline,
+                      title: 'Change Password',
+                      onTap: _isUpdatingAccount ? null : _changePassword,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
             OutlinedButton.icon(
               onPressed: _confirmLogOut,
               style: OutlinedButton.styleFrom(
@@ -336,10 +474,14 @@ class _EditProfileSheet extends StatefulWidget {
   const _EditProfileSheet({
     required this.initialProfile,
     required this.maxDisplayNameLength,
+    required this.imagePicker,
+    required this.avatarUrl,
   });
 
   final _ProfileDetails initialProfile;
   final int maxDisplayNameLength;
+  final ImagePicker imagePicker;
+  final String? avatarUrl;
 
   @override
   State<_EditProfileSheet> createState() => _EditProfileSheetState();
@@ -348,25 +490,47 @@ class _EditProfileSheet extends StatefulWidget {
 class _EditProfileSheetState extends State<_EditProfileSheet> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _name;
-  late final TextEditingController _phone;
+  String? _selectedImagePath;
+  bool _removeAvatar = false;
 
   @override
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.initialProfile.displayName);
-    _phone = TextEditingController(text: widget.initialProfile.phoneNumber);
   }
 
   @override
   void dispose() {
     _name.dispose();
-    _phone.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickPhoto() async {
+    final picked = await widget.imagePicker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 900,
+      imageQuality: 86,
+    );
+    if (picked == null) return;
+    setState(() {
+      _selectedImagePath = picked.path;
+      _removeAvatar = false;
+    });
+  }
+
+  void _removePhoto() {
+    setState(() {
+      _selectedImagePath = null;
+      _removeAvatar = true;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final hasPhoto =
+        _selectedImagePath != null ||
+        (!_removeAvatar && (widget.avatarUrl?.isNotEmpty ?? false));
     return Padding(
       padding: EdgeInsets.fromLTRB(22, 10, 22, bottomInset + 22),
       child: SingleChildScrollView(
@@ -394,6 +558,33 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
                 ),
               ),
               const SizedBox(height: 18),
+              Center(
+                child: Column(
+                  children: [
+                    _ProfileAvatar(
+                      avatarUrl: _removeAvatar ? null : widget.avatarUrl,
+                      localImagePath: _selectedImagePath,
+                      radius: 46,
+                    ),
+                    const SizedBox(height: 10),
+                    TextButton.icon(
+                      onPressed: _pickPhoto,
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: Text(hasPhoto ? 'Replace Photo' : 'Choose Photo'),
+                    ),
+                    if (hasPhoto)
+                      TextButton.icon(
+                        onPressed: _removePhoto,
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Remove Photo'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.red,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
               TextFormField(
                 controller: _name,
                 maxLength: widget.maxDisplayNameLength,
@@ -410,21 +601,6 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
                   return null;
                 },
               ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: _phone,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: 'Phone Number (optional)',
-                  prefixIcon: Icon(Icons.phone_outlined),
-                ),
-                validator: (value) {
-                  final text = _text(value);
-                  if (text.isEmpty) return null;
-                  final valid = RegExp(r'^[0-9+\-\s()]{7,20}$').hasMatch(text);
-                  return valid ? null : 'Enter a valid phone number.';
-                },
-              ),
               const SizedBox(height: 22),
               SizedBox(
                 width: double.infinity,
@@ -433,9 +609,10 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
                     if (!(_formKey.currentState?.validate() ?? false)) return;
                     Navigator.pop(
                       context,
-                      _ProfileDetails(
+                      _ProfileEditResult(
                         displayName: _text(_name.text),
-                        phoneNumber: _text(_phone.text),
+                        selectedImagePath: _selectedImagePath,
+                        removeAvatar: _removeAvatar,
                       ),
                     );
                   },
@@ -451,16 +628,293 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
 }
 
 class _ProfileDetails {
-  const _ProfileDetails({this.displayName = '', this.phoneNumber = ''});
+  const _ProfileDetails({this.displayName = '', this.avatarPath = ''});
 
   factory _ProfileDetails.fromJson(Map<String, dynamic> json) =>
       _ProfileDetails(
         displayName: _text(json['display_name']),
-        phoneNumber: _text(json['phone_number'] ?? json['phone']),
+        avatarPath: _text(json['avatar_path'] ?? json['avatar_url']),
       );
 
   final String displayName;
-  final String phoneNumber;
+  final String avatarPath;
+}
+
+class _ProfileEditResult {
+  const _ProfileEditResult({
+    required this.displayName,
+    required this.selectedImagePath,
+    required this.removeAvatar,
+  });
+
+  final String displayName;
+  final String? selectedImagePath;
+  final bool removeAvatar;
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  const _ProfileAvatar({
+    required this.radius,
+    this.avatarUrl,
+    this.localImagePath,
+  });
+
+  final double radius;
+  final String? avatarUrl;
+  final String? localImagePath;
+
+  @override
+  Widget build(BuildContext context) {
+    ImageProvider<Object>? image;
+    if (localImagePath != null) {
+      image = FileImage(io.File(localImagePath!));
+    } else if (avatarUrl != null && avatarUrl!.isNotEmpty) {
+      image = NetworkImage(avatarUrl!);
+    }
+
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: AppTheme.paleBlue,
+      backgroundImage: image,
+      child: image == null
+          ? Icon(Icons.person, size: radius * 1.05, color: AppTheme.blue)
+          : null,
+    );
+  }
+}
+
+class _SecurityActionRow extends StatelessWidget {
+  const _SecurityActionRow({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    enabled: onTap != null,
+    leading: Icon(icon, color: AppTheme.blue),
+    title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onTap,
+  );
+}
+
+class _ChangeEmailSheet extends StatefulWidget {
+  const _ChangeEmailSheet({required this.currentEmail});
+
+  final String currentEmail;
+
+  @override
+  State<_ChangeEmailSheet> createState() => _ChangeEmailSheetState();
+}
+
+class _ChangeEmailSheetState extends State<_ChangeEmailSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _email = TextEditingController();
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(22, 10, 22, bottomInset + 22),
+      child: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SheetHandle(),
+              const SizedBox(height: 22),
+              Text(
+                'Change Email',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Current Email',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: AppTheme.muted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(widget.currentEmail),
+              const SizedBox(height: 18),
+              TextFormField(
+                controller: _email,
+                keyboardType: TextInputType.emailAddress,
+                autofillHints: const [AutofillHints.email],
+                decoration: const InputDecoration(
+                  labelText: 'New Email',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+                validator: (value) {
+                  final text = _text(value);
+                  if (text.isEmpty || !text.contains('@')) {
+                    return 'Enter a valid email address.';
+                  }
+                  if (text.toLowerCase() == widget.currentEmail.toLowerCase()) {
+                    return 'Enter a different email address.';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 22),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () {
+                    if (!(_formKey.currentState?.validate() ?? false)) return;
+                    Navigator.pop(context, _text(_email.text));
+                  },
+                  child: const Text('Update Email'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChangePasswordSheet extends StatefulWidget {
+  const _ChangePasswordSheet();
+
+  @override
+  State<_ChangePasswordSheet> createState() => _ChangePasswordSheetState();
+}
+
+class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _password = TextEditingController();
+  final _confirm = TextEditingController();
+  bool _obscurePassword = true;
+  bool _obscureConfirm = true;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(22, 10, 22, bottomInset + 22),
+      child: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SheetHandle(),
+              const SizedBox(height: 22),
+              Text(
+                'Change Password',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 18),
+              TextFormField(
+                controller: _password,
+                obscureText: _obscurePassword,
+                autofillHints: const [AutofillHints.newPassword],
+                decoration: InputDecoration(
+                  labelText: 'New Password',
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                ),
+                validator: (value) => value != null && value.length >= 8
+                    ? null
+                    : 'Use at least 8 characters.',
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _confirm,
+                obscureText: _obscureConfirm,
+                autofillHints: const [AutofillHints.newPassword],
+                decoration: InputDecoration(
+                  labelText: 'Confirm New Password',
+                  prefixIcon: const Icon(Icons.lock_reset_outlined),
+                  suffixIcon: IconButton(
+                    onPressed: () =>
+                        setState(() => _obscureConfirm = !_obscureConfirm),
+                    icon: Icon(
+                      _obscureConfirm
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Confirm your new password.';
+                  }
+                  return value == _password.text
+                      ? null
+                      : 'Passwords do not match.';
+                },
+              ),
+              const SizedBox(height: 22),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () {
+                    if (!(_formKey.currentState?.validate() ?? false)) return;
+                    Navigator.pop(context, _password.text);
+                  },
+                  child: const Text('Update Password'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetHandle extends StatelessWidget {
+  const _SheetHandle();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Container(
+      width: 42,
+      height: 4,
+      decoration: BoxDecoration(
+        color: Colors.black26,
+        borderRadius: BorderRadius.circular(999),
+      ),
+    ),
+  );
 }
 
 String _text(Object? value) => value?.toString().trim() ?? '';
