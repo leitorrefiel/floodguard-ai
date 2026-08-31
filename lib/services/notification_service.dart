@@ -26,7 +26,8 @@ class NotificationService {
   static const _channelId = 'floodguard_alerts_v2';
   static const _channelName = 'FloodGuard Alerts';
   static const _channelDescription = 'Flood and hazard safety notifications';
-  static const _notificationIcon = '@drawable/ic_stat_floodguard';
+  static const _notificationIcon = '@drawable/ic_floodguard_notification';
+  static const _largeNotificationIcon = 'ic_floodguard_app_icon';
   static final _vibrationPattern = Int64List.fromList([0, 350, 160, 350]);
 
   final _notifications = FlutterLocalNotificationsPlugin();
@@ -89,11 +90,13 @@ class NotificationService {
     required int id,
     required String title,
     required String body,
+    String? expandedBody,
     Map<String, dynamic>? payload,
   }) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     await _ensureAlertChannel();
-    final expandedBody = payload?['expanded_body']?.toString() ?? body;
+    final resolvedExpandedBody =
+        expandedBody ?? payload?['expanded_body']?.toString() ?? body;
     await _notifications.show(
       id: id,
       title: title,
@@ -107,7 +110,7 @@ class NotificationService {
           importance: Importance.max,
           priority: Priority.max,
           styleInformation: BigTextStyleInformation(
-            expandedBody,
+            resolvedExpandedBody,
             contentTitle: title,
             summaryText: 'FloodGuard',
           ),
@@ -119,6 +122,9 @@ class NotificationService {
           ticker: title,
           visibility: NotificationVisibility.public,
           category: AndroidNotificationCategory.alarm,
+          largeIcon: const DrawableResourceAndroidBitmap(
+            _largeNotificationIcon,
+          ),
           audioAttributesUsage: AudioAttributesUsage.notificationEvent,
         ),
       ),
@@ -126,16 +132,31 @@ class NotificationService {
     );
   }
 
+  Future<void> showTemplateAlert({
+    required FloodGuardAlertTemplate template,
+    int? id,
+    Map<String, dynamic>? payload,
+  }) {
+    final mergedPayload = <String, dynamic>{
+      'type': template.type,
+      'screen': template.screen,
+      if (payload != null) ...payload,
+    };
+    return showFloodAlert(
+      id: id ?? template.id,
+      title: template.title,
+      body: template.body,
+      expandedBody: template.expandedBody,
+      payload: mergedPayload,
+    );
+  }
+
   Future<void> showDemoFloodWatch() => showFloodAlert(
     id: 1001,
-    title: 'FloodGuard: Flood Warning',
-    body: 'Heavy rainfall and a nearby flood report were detected.',
-    payload: const {
-      'type': 'flood_warning',
-      'screen': 'alerts',
-      'expanded_body':
-          'Heavy rainfall and a nearby flood report were detected. Avoid low-lying roads and check the Flood Map for nearby reports.',
-    },
+    title: _floodWatchTemplate.title,
+    body: _floodWatchTemplate.body,
+    expandedBody: _floodWatchTemplate.expandedBody,
+    payload: const {'type': 'flood_watch', 'screen': 'alerts'},
   );
 
   Future<void> registerPushDevice() async {
@@ -292,3 +313,93 @@ class NotificationService {
     }
   }
 }
+
+class FloodGuardAlertTemplate {
+  const FloodGuardAlertTemplate({
+    required this.id,
+    required this.type,
+    required this.screen,
+    required this.title,
+    required this.body,
+    required this.expandedBody,
+  });
+
+  final int id;
+  final String type;
+  final String screen;
+  final String title;
+  final String body;
+  final String expandedBody;
+}
+
+const _floodWatchTemplate = FloodGuardAlertTemplate(
+  id: 1001,
+  type: 'flood_watch',
+  screen: 'alerts',
+  title: 'FloodGuard — Flood Watch',
+  body:
+      'Heavy rainfall and a nearby flood report were detected in Baliwag. Check the Flood Map for updates.',
+  expandedBody:
+      'Heavy rainfall and a nearby flood report were detected in Baliwag.\n'
+      'Avoid low-lying roads and flooded routes.\n'
+      'Open FloodGuard to view the affected area and nearby safety facilities.',
+);
+
+const floodWarningAlertTemplate = FloodGuardAlertTemplate(
+  id: 1101,
+  type: 'flood_warning',
+  screen: 'alerts',
+  title: 'FloodGuard — Flood Warning',
+  body:
+      'Multiple flood reports were detected near your area. Check the Flood Map and avoid affected roads.',
+  expandedBody:
+      'Multiple flood reports were detected near your area.\n'
+      'Check the Flood Map and avoid affected roads.',
+);
+
+const nearbyHazardAlertTemplate = FloodGuardAlertTemplate(
+  id: 1102,
+  type: 'nearby_hazard',
+  screen: 'alerts',
+  title: 'FloodGuard — Hazard Nearby',
+  body:
+      'A new drainage or waterway hazard was reported near your area. View the map for details.',
+  expandedBody:
+      'A new drainage or waterway hazard was reported near your area.\n'
+      'Open FloodGuard to view the map and report details.',
+);
+
+const severeRainfallAlertTemplate = FloodGuardAlertTemplate(
+  id: 1103,
+  type: 'severe_rainfall',
+  screen: 'alerts',
+  title: 'FloodGuard — Heavy Rainfall Alert',
+  body:
+      'Heavy rainfall is expected in your area. Monitor flood conditions and prepare emergency supplies.',
+  expandedBody:
+      'Heavy rainfall is expected in your area.\n'
+      'Monitor flood conditions and prepare emergency supplies.',
+);
+
+const evacuationAdvisoryAlertTemplate = FloodGuardAlertTemplate(
+  id: 1104,
+  type: 'evacuation_advisory',
+  screen: 'alerts',
+  title: 'FloodGuard — Safety Advisory',
+  body:
+      'Flood conditions may require evacuation. Check nearby safety facilities and official advisories.',
+  expandedBody:
+      'Flood conditions may require evacuation.\n'
+      'Check nearby safety facilities and official advisories.',
+);
+
+const communityReportUpdateAlertTemplate = FloodGuardAlertTemplate(
+  id: 1105,
+  type: 'community_report_update',
+  screen: 'alerts',
+  title: 'FloodGuard — Report Update',
+  body: 'A community hazard report near your area has been updated.',
+  expandedBody:
+      'A community hazard report near your area has been updated.\n'
+      'Open FloodGuard to review the latest status.',
+);
