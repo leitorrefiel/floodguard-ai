@@ -169,9 +169,10 @@ class ReportVerificationService {
     }
 
     final weather = context.weather;
-    if (weather != null) {
-      final currentRain =
-          weather.current.rainMm + weather.current.precipitationMm;
+    if (weather != null && !weather.isStale) {
+      // Open-Meteo precipitation already includes rain. Adding both fields
+      // would double-count the same modelled precipitation signal.
+      final currentRain = weather.current.precipitationMm;
       final forecastRain = weather.days.isEmpty
           ? 0
           : weather.days.first.precipitationMm;
@@ -201,6 +202,9 @@ class ReportVerificationService {
       }
       evidence['weather'] = {
         'available': true,
+        'source': weather.sourceLabel,
+        'is_observation': false,
+        'fetched_at': weather.fetchedAt.toIso8601String(),
         'rain_relevant': rainRelevant,
         'current_rain_mm': currentRain,
         'forecast_rain_mm': forecastRain,
@@ -209,7 +213,9 @@ class ReportVerificationService {
     } else {
       evidence['weather'] = {
         'available': false,
-        'reason': 'Weather check temporarily unavailable.',
+        'reason': weather?.isStale == true
+            ? 'Only stale model weather data was available.'
+            : 'Weather check temporarily unavailable.',
       };
       _log('weather score: +0 unavailable');
       signals.add('Some verification checks are temporarily unavailable');

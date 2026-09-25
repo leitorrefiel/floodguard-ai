@@ -1,6 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -16,6 +16,7 @@ import '../services/risk_service.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
+import '../widgets/data_source_link.dart';
 import 'evacuation_centers_screen.dart';
 
 class AlertsScreen extends StatefulWidget {
@@ -26,6 +27,9 @@ class AlertsScreen extends StatefulWidget {
 }
 
 class _AlertsScreenState extends State<AlertsScreen> {
+  static const _developerMode = bool.fromEnvironment(
+    'FLOODGUARD_DEVELOPER_MODE',
+  );
   static const _readAlertsKey = 'floodguard_read_alert_ids';
   static const _prefsPrefix = 'floodguard_alert_pref';
 
@@ -192,11 +196,11 @@ class _AlertsScreenState extends State<AlertsScreen> {
           id: 'risk-high-${_dayKey(DateTime.now())}',
           type: _AlertType.flood,
           level: _AlertLevel.warning,
-          title: 'High flood risk nearby',
+          title: 'High weather-based flood concern',
           message: risk.summary,
           location: location.label,
           createdAt: DateTime.now(),
-          source: 'FloodGuard risk logic and Open-Meteo rainfall data',
+          source: 'FloodGuard rule-based estimate using Open-Meteo model data',
           recommendedAction:
               'Avoid low-lying roads, monitor the Flood Map, and prepare to move to a safer area if local officials advise evacuation.',
           mapReportId: null,
@@ -209,11 +213,11 @@ class _AlertsScreenState extends State<AlertsScreen> {
           id: 'risk-watch-${_dayKey(DateTime.now())}',
           type: _AlertType.weather,
           level: _AlertLevel.watch,
-          title: 'Flood watch conditions',
+          title: 'Moderate weather-based flood concern',
           message: risk.summary,
           location: location.label,
           createdAt: DateTime.now(),
-          source: 'FloodGuard risk logic and Open-Meteo rainfall data',
+          source: 'FloodGuard rule-based estimate using Open-Meteo model data',
           recommendedAction:
               'Watch rain intensity and check reports before traveling through flood-prone roads.',
           mapReportId: null,
@@ -230,12 +234,12 @@ class _AlertsScreenState extends State<AlertsScreen> {
           level: risk.forecastRainMm >= 50
               ? _AlertLevel.warning
               : _AlertLevel.watch,
-          title: 'Severe rainfall advisory',
+          title: 'Heavy rainfall forecast',
           message:
               'Forecast rainfall may reach ${risk.forecastRainLabel} in your selected area.',
           location: location.label,
           createdAt: DateTime.now(),
-          source: 'Open-Meteo rainfall forecast',
+          source: 'Open-Meteo model forecast',
           recommendedAction:
               'Charge devices, secure important documents, and monitor official weather advisories.',
           mapReportId: null,
@@ -251,14 +255,26 @@ class _AlertsScreenState extends State<AlertsScreen> {
     DeviceLocation? location,
   ) {
     final reports =
-        mapData.reports.where((item) => item.report.isActive).toList()
+        mapData.reports.where((item) => item.report.isActive).where((item) {
+            if (location == null) return false;
+            return _distanceMeters(
+                  location.latitude,
+                  location.longitude,
+                  item.coordinate.latitude,
+                  item.coordinate.longitude,
+                ) <=
+                10000;
+          }).toList()
           ..sort((a, b) => b.report.createdAt.compareTo(a.report.createdAt));
-    final floodReports = reports.where(
-      (item) => _isFloodReport(item.report.type),
+    final supportedReports = reports.where(
+      (item) => item.report.contributesToRisk,
     );
-    final hazardReports = reports.where(
-      (item) => !_isFloodReport(item.report.type),
-    );
+    final floodReports = supportedReports
+        .where((item) => _isFloodReport(item.report.type))
+        .toList();
+    final hazardReports = supportedReports
+        .where((item) => !_isFloodReport(item.report.type))
+        .toList();
     final alerts = <_AppAlert>[];
 
     if (floodReports.length >= 2) {
@@ -276,7 +292,9 @@ class _AlertsScreenState extends State<AlertsScreen> {
           recommendedAction:
               'Avoid affected roads and open the Flood Map before traveling.',
           mapReportId: floodReports.first.report.id,
-          shouldNotify: true,
+          shouldNotify: floodReports.every(
+            (item) => item.report.contributesToRisk,
+          ),
         ),
       );
     } else if (floodReports.length == 1) {
@@ -358,8 +376,8 @@ class _AlertsScreenState extends State<AlertsScreen> {
               .length ??
           0;
       return floodCount > 0
-          ? 'High flood risk and $floodCount flood report${floodCount == 1 ? '' : 's'} detected.'
-          : 'High flood risk detected near ${location?.label ?? 'your selected area'}.';
+          ? 'High weather-based concern and $floodCount community flood report${floodCount == 1 ? '' : 's'} nearby.'
+          : 'High weather-based flood concern near ${location?.label ?? 'your selected area'}.';
     }
     final reportCount =
         mapData?.reports.where((item) => item.report.isActive).length ?? 0;
@@ -484,7 +502,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
           _recentAlertsSection(),
           const SizedBox(height: 18),
           _notificationPreferencesCard(),
-          if (kDebugMode) ...[
+          if (_developerMode) ...[
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: _sendTestAlert,
@@ -764,6 +782,8 @@ class _AlertsScreenState extends State<AlertsScreen> {
               _detail('Affected Location', alert.location),
               _detail('Time', _formatAlertTime(alert.createdAt)),
               _detail('Source', alert.source),
+              if (alert.source.contains('Open-Meteo'))
+                const DataSourceLink.openMeteo(),
               _detail('Recommended', alert.recommendedAction),
               const SizedBox(height: 10),
               if (alert.mapReportId != null ||
@@ -856,6 +876,27 @@ class _AlertsScreenState extends State<AlertsScreen> {
 
   String _dayKey(DateTime time) =>
       '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')}';
+
+  double _distanceMeters(
+    double latitudeA,
+    double longitudeA,
+    double latitudeB,
+    double longitudeB,
+  ) {
+    const radius = 6371000.0;
+    double radians(double value) => value * math.pi / 180;
+    final latA = radians(latitudeA);
+    final latB = radians(latitudeB);
+    final deltaLat = radians(latitudeB - latitudeA);
+    final deltaLng = radians(longitudeB - longitudeA);
+    final value =
+        math.sin(deltaLat / 2) * math.sin(deltaLat / 2) +
+        math.cos(latA) *
+            math.cos(latB) *
+            math.sin(deltaLng / 2) *
+            math.sin(deltaLng / 2);
+    return radius * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value));
+  }
 
   String _hourKey(DateTime time) => '${_dayKey(time)}-${time.hour}';
 

@@ -10,6 +10,7 @@ type NotificationPayload = {
   longitude?: number;
   source?: string;
   report_id?: string;
+  expires_at?: string;
   data?: Record<string, unknown>;
   target?: {
     mode?: "current_user" | "baliwag_development_area" | "all";
@@ -21,6 +22,10 @@ type PushDevice = {
   id: string;
   user_id: string | null;
   fcm_token: string;
+  latitude: number | null;
+  longitude: number | null;
+  alert_radius_km: number;
+  location_updated_at: string | null;
 };
 
 type NotificationPreference = {
@@ -38,13 +43,15 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+type ServerClient = any;
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const payload = await request.json() as NotificationPayload;
+    const payload = (await request.json()) as NotificationPayload;
     const title = payload.title?.trim();
     const message = payload.message?.trim();
     if (!title || !message) {
@@ -56,9 +63,68 @@ Deno.serve(async (request) => {
     const firebaseProjectId = requiredEnv("FIREBASE_PROJECT_ID");
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const authUserId = await userIdFromRequest(supabase, request);
-    const targetMode = payload.target?.mode ?? "baliwag_development_area";
-    const targetUserId = payload.target?.user_id ??
+    const configuredSecret =
+      Deno.env.get("FLOODGUARD_ALERT_INGEST_SECRET") ?? "";
+    const suppliedSecret =
+      request.headers.get("x-floodguard-ingest-secret") ?? "";
+    const trustedIngest =
+      configuredSecret.length >= 32 && suppliedSecret === configuredSecret;
+    const targetMode = payload.target?.mode ?? "current_user";
+    if (!trustedIngest && !authUserId) {
+      return json({ error: "Authentication is required." }, 401);
+    }
+    if (!trustedIngest && targetMode !== "current_user") {
+      return json(
+        { error: "A trusted ingest secret is required for broadcasts." },
+        403,
+      );
+    }
+    const targetUserId =
+      payload.target?.user_id ??
       (targetMode === "current_user" ? authUserId : undefined);
+    if (!trustedIngest && targetUserId !== authUserId) {
+      return json(
+        { error: "Users may only send a developer test to themselves." },
+        403,
+      );
+    }
+    const hasGeographicTarget =
+      Number.isFinite(payload.latitude) && Number.isFinite(payload.longitude);
+    if (targetMode !== "current_user" && !hasGeographicTarget) {
+      return json(
+        { error: "Geographic broadcasts require latitude and longitude." },
+        400,
+      );
+    }
+
+    await supabase
+      .from("alerts")
+      .update({ is_active: false })
+      .eq("is_active", true)
+      .lt("expires_at", new Date().toISOString());
+
+    const dedupeKey = String(
+      payload.data?.dedupe_key ??
+        (payload.report_id
+          ? `report:${payload.report_id}:${payload.type ?? "community_update"}`
+          : `${payload.source ?? "FloodGuard"}:${payload.type ?? "alert"}:${title}`),
+    ).slice(0, 300);
+    const { data: duplicate } = await supabase
+      .from("alerts")
+      .select("id")
+      .eq("dedupe_key", dedupeKey)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (duplicate) {
+      return json({ alert_id: duplicate.id, duplicate: true, sent: 0 });
+    }
+
+    const requestedExpiry = payload.expires_at
+      ? new Date(payload.expires_at)
+      : new Date(Date.now() + (trustedIngest ? 6 : 0.25) * 60 * 60 * 1000);
+    if (Number.isNaN(requestedExpiry.getTime())) {
+      return json({ error: "expires_at is invalid." }, 400);
+    }
 
     const alertInsert = {
       user_id: targetUserId ?? null,
@@ -73,7 +139,8 @@ Deno.serve(async (request) => {
       report_id: payload.report_id ?? null,
       data: payload.data ?? {},
       is_active: true,
-      expires_at: null,
+      expires_at: requestedExpiry.toISOString(),
+      dedupe_key: dedupeKey,
     };
     const { data: alert, error: alertError } = await supabase
       .from("alerts")
@@ -84,7 +151,9 @@ Deno.serve(async (request) => {
 
     let deviceQuery = supabase
       .from("push_devices")
-      .select("id,user_id,fcm_token")
+      .select(
+        "id,user_id,fcm_token,latitude,longitude,alert_radius_km,location_updated_at",
+      )
       .eq("is_active", true);
     if (targetUserId) {
       deviceQuery = deviceQuery.eq("user_id", targetUserId);
@@ -94,16 +163,44 @@ Deno.serve(async (request) => {
     if (deviceError) throw deviceError;
 
     const activeDevices = (devices ?? []) as PushDevice[];
-    const userIds = [...new Set(activeDevices.map((item) => item.user_id).filter(
-      (value): value is string => Boolean(value),
-    ))];
+    const userIds = [
+      ...new Set(
+        activeDevices
+          .map((item) => item.user_id)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
     const preferences = await loadPreferences(supabase, userIds);
-    const allowedDevices = activeDevices.filter((device) =>
-      allowsNotification(
+    const allowedDevices = activeDevices.filter((device) => {
+      const preferenceAllows = allowsNotification(
         preferences.get(device.user_id ?? ""),
         payload.type ?? "flood_warning",
+      );
+      if (!preferenceAllows) return false;
+      if (targetMode === "current_user") return true;
+      if (
+        device.latitude == null ||
+        device.longitude == null ||
+        !device.location_updated_at
       )
-    );
+        return false;
+      const locationAge =
+        Date.now() - new Date(device.location_updated_at).getTime();
+      if (
+        !Number.isFinite(locationAge) ||
+        locationAge > 30 * 24 * 60 * 60 * 1000
+      ) {
+        return false;
+      }
+      return (
+        distanceKm(
+          device.latitude,
+          device.longitude,
+          payload.latitude!,
+          payload.longitude!,
+        ) <= device.alert_radius_km
+      );
+    });
 
     const accessToken = await firebaseAccessToken();
     let sent = 0;
@@ -116,7 +213,7 @@ Deno.serve(async (request) => {
         {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -170,14 +267,12 @@ Deno.serve(async (request) => {
       invalid_tokens: invalidTokens.length,
     });
   } catch (error) {
-    return json({ error: String(error?.message ?? error) }, 500);
+    const message = error instanceof Error ? error.message : String(error);
+    return json({ error: message }, 500);
   }
 });
 
-async function userIdFromRequest(
-  supabase: ReturnType<typeof createClient>,
-  request: Request,
-) {
+async function userIdFromRequest(supabase: ServerClient, request: Request) {
   const authHeader = request.headers.get("Authorization");
   const token = authHeader?.replace("Bearer ", "").trim();
   if (!token) return null;
@@ -185,10 +280,7 @@ async function userIdFromRequest(
   return data.user?.id ?? null;
 }
 
-async function loadPreferences(
-  supabase: ReturnType<typeof createClient>,
-  userIds: string[],
-) {
+async function loadPreferences(supabase: ServerClient, userIds: string[]) {
   const map = new Map<string, NotificationPreference>();
   if (userIds.length === 0) return map;
   const { data, error } = await supabase
@@ -223,9 +315,22 @@ function allowsNotification(
   }
 }
 
+function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const radians = (value: number) => (value * Math.PI) / 180;
+  const dLat = radians(lat2 - lat1);
+  const dLon = radians(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(radians(lat1)) * Math.cos(radians(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 async function firebaseAccessToken() {
   const clientEmail = requiredEnv("FIREBASE_CLIENT_EMAIL");
-  const privateKey = requiredEnv("FIREBASE_PRIVATE_KEY").replaceAll("\\n", "\n");
+  const privateKey = requiredEnv("FIREBASE_PRIVATE_KEY").replaceAll(
+    "\\n",
+    "\n",
+  );
   const now = Math.floor(Date.now() / 1000);
   const assertion = await signJwt(
     {
@@ -303,10 +408,10 @@ function base64Url(value: string) {
 function base64UrlBytes(bytes: Uint8Array) {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll(
-    "=",
-    "",
-  );
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
 }
 
 function requiredEnv(name: string) {

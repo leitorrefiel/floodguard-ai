@@ -4,6 +4,7 @@ import '../services/device_location_service.dart';
 import '../services/risk_service.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
+import '../widgets/data_source_link.dart';
 
 class RiskDetailsScreen extends StatefulWidget {
   const RiskDetailsScreen({super.key});
@@ -119,14 +120,14 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'FLOOD RISK',
+              'FLOODGUARD ESTIMATE',
               style: TextStyle(
                 color: AppTheme.blue,
                 fontWeight: FontWeight.bold,
               ),
             ),
             Text(
-              assessment.level,
+              assessment.displayLevel,
               style: TextStyle(
                 fontSize: 27,
                 fontWeight: FontWeight.w800,
@@ -165,10 +166,11 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
             const SizedBox(height: 10),
             Text(
               assessment.observedAt.isEmpty
-                  ? 'Source: Open-Meteo live forecast'
+                  ? 'Source: Open-Meteo model forecast'
                   : 'Updated: ${assessment.observedAt}',
               style: const TextStyle(fontSize: 12, color: AppTheme.muted),
             ),
+            const DataSourceLink.openMeteo(),
           ],
         ),
       ),
@@ -180,7 +182,7 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
           Icons.warning_rounded,
           color: _riskColor(assessment.level),
         ),
-        title: Text('${assessment.level} Advisory'),
+        title: Text('${assessment.displayLevel} Advisory'),
         subtitle: Text(assessment.summary),
       ),
     ),

@@ -3,10 +3,12 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../models/hazard_report.dart';
+import '../services/device_location_service.dart';
 import '../services/hazard_report_service.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
+import '../widgets/data_source_link.dart';
 
 class ForecastScreen extends StatefulWidget {
   const ForecastScreen({super.key});
@@ -21,10 +23,12 @@ class _ForecastScreenState extends State<ForecastScreen> {
 
   final _weatherService = WeatherService();
   final _reportService = HazardReportService();
+  final _locationService = DeviceLocationService();
   WeatherForecastResponse? _forecast;
   String? _error;
   int? _nearbyFloodReportCount;
   bool _isLoading = true;
+  String _locationLabel = 'Baliwag, Bulacan';
 
   @override
   void initState() {
@@ -38,18 +42,27 @@ class _ForecastScreenState extends State<ForecastScreen> {
       _error = null;
     });
     try {
+      final location =
+          await _locationService.getSavedLocation() ??
+          const DeviceLocation(
+            label: 'Baliwag, Bulacan',
+            latitude: _baliwagLatitude,
+            longitude: _baliwagLongitude,
+          );
       final results = await Future.wait<Object?>([
         _weatherService.getForecast(
-          latitude: _baliwagLatitude,
-          longitude: _baliwagLongitude,
+          latitude: location.latitude,
+          longitude: location.longitude,
+          forceRefresh: true,
         ),
-        _loadNearbyFloodReportCount(),
+        _loadNearbyFloodReportCount(location.latitude, location.longitude),
       ]);
       final forecast = results[0] as WeatherForecastResponse;
       if (!mounted) return;
       setState(() {
         _forecast = forecast;
         _nearbyFloodReportCount = results[1] as int?;
+        _locationLabel = location.label;
       });
     } on WeatherException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -87,7 +100,10 @@ class _ForecastScreenState extends State<ForecastScreen> {
           else if (_forecast != null) ...[
             _SectionTitle('Current Conditions'),
             const SizedBox(height: 8),
-            _CurrentWeatherCard(forecast: _forecast!),
+            _CurrentWeatherCard(
+              forecast: _forecast!,
+              locationLabel: _locationLabel,
+            ),
             const SizedBox(height: 16),
             _RainOutlookCard(forecast: _forecast!),
             const SizedBox(height: 16),
@@ -113,7 +129,10 @@ class _ForecastScreenState extends State<ForecastScreen> {
     ),
   );
 
-  Future<int?> _loadNearbyFloodReportCount() async {
+  Future<int?> _loadNearbyFloodReportCount(
+    double latitude,
+    double longitude,
+  ) async {
     try {
       final reports = await _reportService.getReports(
         includeCommunityReports: true,
@@ -125,8 +144,8 @@ class _ForecastScreenState extends State<ForecastScreen> {
           return false;
         }
         return _distanceMeters(
-              _baliwagLatitude,
-              _baliwagLongitude,
+              latitude,
+              longitude,
               report.latitude!,
               report.longitude!,
             ) <=
@@ -153,9 +172,13 @@ class _SectionTitle extends StatelessWidget {
 }
 
 class _CurrentWeatherCard extends StatelessWidget {
-  const _CurrentWeatherCard({required this.forecast});
+  const _CurrentWeatherCard({
+    required this.forecast,
+    required this.locationLabel,
+  });
 
   final WeatherForecastResponse forecast;
+  final String locationLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -187,9 +210,9 @@ class _CurrentWeatherCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Baliwag, Bulacan',
-                        style: TextStyle(fontWeight: FontWeight.w800),
+                      Text(
+                        locationLabel,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 6),
                       Text(
@@ -211,7 +234,7 @@ class _CurrentWeatherCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _MetricBlock(
-                    label: 'Rain now',
+                    label: 'Rain estimate',
                     value: '${current.precipitationMm.toStringAsFixed(1)} mm',
                   ),
                 ),
@@ -227,11 +250,13 @@ class _CurrentWeatherCard extends StatelessWidget {
             if (current.observedAt.isNotEmpty) ...[
               const SizedBox(height: 14),
               Text(
-                'Updated ${_timeLabel(current.observedAt)}',
+                '${forecast.sourceLabel} - valid ${_timeLabel(current.observedAt)}'
+                '${forecast.isStale ? ' - cached/stale' : ''}',
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: Colors.black54),
               ),
+              const DataSourceLink.openMeteo(),
             ],
           ],
         ),

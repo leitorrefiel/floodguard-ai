@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'device_location_service.dart';
+
 @pragma('vm:entry-point')
 Future<void> floodGuardFirebaseMessagingBackgroundHandler(
   RemoteMessage message,
@@ -300,11 +302,19 @@ class NotificationService {
     try {
       final client = Supabase.instance.client;
       final userId = client.auth.currentUser?.id;
+      if (userId == null) return;
+      final location = await DeviceLocationService().getSavedLocation();
       await client.from('push_devices').upsert({
         'user_id': userId,
         'fcm_token': token,
         'platform': defaultTargetPlatform.name,
         'is_active': true,
+        'latitude': location?.latitude,
+        'longitude': location?.longitude,
+        'alert_radius_km': 10,
+        'location_updated_at': location == null
+            ? null
+            : DateTime.now().toUtc().toIso8601String(),
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'fcm_token');
       debugPrint('[Notifications] FCM token registered.');

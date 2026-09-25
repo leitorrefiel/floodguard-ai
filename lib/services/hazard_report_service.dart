@@ -9,16 +9,19 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/hazard_report.dart';
 import '../models/map_hazard.dart';
 import 'hazard_image_verification_service.dart';
+import 'official_hazard_service.dart';
 import 'report_verification_service.dart';
 import 'weather_service.dart';
 
 class HazardReportService {
+  static const _apiTimeout = Duration(seconds: 8);
   static const _storageKey = 'hazard_reports';
   static const _confirmationStorageKey = 'hazard_report_confirmations';
   static const _tableName = 'hazard_reports';
   static const _confirmationTableName = 'report_confirmations';
   static const _photoBucket = 'hazard-report-photos';
   static const _signedPhotoUrlSeconds = 60 * 60;
+  static const _strictRemote = bool.fromEnvironment('SUPABASE_STRICT_REMOTE');
 
   HazardReportService({SupabaseClient? client})
     : _client = client ?? Supabase.instance.client {
@@ -30,7 +33,8 @@ class HazardReportService {
   final ReportVerificationService _verificationService =
       ReportVerificationService();
   final WeatherService _weatherService = WeatherService();
-  String _storageLabel = 'Local device storage';
+  final OfficialHazardService _officialHazardService = OfficialHazardService();
+  String _storageLabel = 'Local device cache';
   String? _lastPhotoUploadError;
 
   String get storageLabel => _storageLabel;
@@ -41,7 +45,7 @@ class HazardReportService {
   }) async {
     final remoteReports = await _tryApiRead(
       includeCommunityReports: includeCommunityReports,
-    );
+    ).timeout(_apiTimeout, onTimeout: () => null);
     if (remoteReports != null) {
       _storageLabel = 'Supabase API';
       await _saveLocalReports(
@@ -51,8 +55,9 @@ class HazardReportService {
       return remoteReports;
     }
 
-    _storageLabel = 'Local device storage';
+    _storageLabel = 'Local device cache (remote unavailable)';
     _log('Supabase unavailable; using local cache/fallback reports.');
+    if (_strictRemote) throw const SupabaseRemoteRequiredException('read');
     return _getLocalReports(includeCommunityReports: includeCommunityReports);
   }
 
@@ -125,7 +130,8 @@ class HazardReportService {
       return _runAutomatedVerification(reportForVerification);
     }
 
-    _storageLabel = 'Local device storage';
+    if (_strictRemote) throw const SupabaseRemoteRequiredException('create');
+    _storageLabel = 'Local device only (not synced)';
     final localReport = localDraft.copyWith(photoUrl: localPhotoPath);
     await _saveLocalReports([localReport, ...existingReports]);
     return _runAutomatedVerification(localReport);
@@ -145,7 +151,12 @@ class HazardReportService {
       updatedAt: DateTime.now(),
     );
     final apiUpdated = await _tryApiUpdate(pending);
-    _storageLabel = apiUpdated ? 'Supabase API' : 'Local device storage';
+    if (!apiUpdated && _strictRemote) {
+      throw const SupabaseRemoteRequiredException('update');
+    }
+    _storageLabel = apiUpdated
+        ? 'Supabase API'
+        : 'Local device only (not synced)';
     var reportForVerification = pending;
     final candidatePhoto = report.photoUrl;
     if (apiUpdated &&
@@ -174,8 +185,19 @@ class HazardReportService {
   Future<bool> confirmReport(HazardReport report) async {
     final confirmerId = _client.auth.currentUser?.id ?? 'local-anonymous';
     if (await _hasConfirmed(report.id, confirmerId)) return false;
-    await _tryApiCreateConfirmation(report.id, confirmerId);
+    final remoteConfirmation = await _tryApiCreateConfirmation(
+      report.id,
+      confirmerId,
+    );
     await _saveLocalConfirmation(report.id, confirmerId);
+
+    if (remoteConfirmation) {
+      await _tryServerVerification(report);
+      return true;
+    }
+    if (_strictRemote) {
+      throw const SupabaseRemoteRequiredException('confirmation');
+    }
 
     final withConfirmation = report.copyWith(
       confirmationCount: report.confirmationCount + 1,
@@ -193,14 +215,19 @@ class HazardReportService {
                 longitude: report.longitude!,
               )
             : null,
+        officialHazardContext: report.hasCoordinate
+            ? await _officialContextFor(
+                latitude: report.latitude!,
+                longitude: report.longitude!,
+              )
+            : null,
       ),
     );
     final confirmed = _verificationService.applyResult(
       withConfirmation,
       verification,
     );
-    final apiUpdated = await _tryApiUpdate(confirmed);
-    _storageLabel = apiUpdated ? 'Supabase API' : 'Local device storage';
+    _storageLabel = 'Local device only (not synced)';
     await _saveLocalReports(
       reports
           .map((item) => item.id == confirmed.id ? confirmed : item)
@@ -218,7 +245,12 @@ class HazardReportService {
     if (report.id.isEmpty) return report;
 
     final apiUpdated = await _tryApiUpdate(report);
-    _storageLabel = apiUpdated ? 'Supabase API' : 'Local device storage';
+    if (!apiUpdated && _strictRemote) {
+      throw const SupabaseRemoteRequiredException('photo update');
+    }
+    _storageLabel = apiUpdated
+        ? 'Supabase API'
+        : 'Local device only (not synced)';
     if (!apiUpdated) {
       final localReport = report.copyWith(photoUrl: localPhotoPath);
       await _replaceReport(localReport);
@@ -261,7 +293,12 @@ class HazardReportService {
 
   Future<void> deleteReport(String id) async {
     final apiDeleted = await _tryApiDelete(id);
-    _storageLabel = apiDeleted ? 'Supabase API' : 'Local device storage';
+    if (!apiDeleted && _strictRemote) {
+      throw const SupabaseRemoteRequiredException('delete');
+    }
+    _storageLabel = apiDeleted
+        ? 'Supabase API'
+        : 'Local device only (not synced)';
     final reports = await _getLocalReports();
     await _saveLocalReports(
       reports.where((report) => report.id != id).toList(),
@@ -295,7 +332,9 @@ class HazardReportService {
           .cast<Map<String, dynamic>>()
           .map(HazardReport.fromJson)
           .toList();
-      return Future.wait(reports.map(_withSignedPhotoUrl));
+      final resolved = await Future.wait(reports.map(_withSignedPhotoUrl));
+      _supabaseLog('read success count=${resolved.length}');
+      return resolved;
     } catch (error, stackTrace) {
       _log('Supabase read failed: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -311,7 +350,7 @@ class HazardReportService {
           .select()
           .single();
       final created = await _withSignedPhotoUrl(HazardReport.fromJson(data));
-      _log('Supabase insert success: ${created.id}');
+      _supabaseLog('create success id=${created.id}');
       return created;
     } catch (error, stackTrace) {
       _log('Supabase insert failed: $error');
@@ -322,12 +361,17 @@ class HazardReportService {
 
   Future<bool> _tryApiUpdate(HazardReport report) async {
     try {
-      await _client
+      final data = await _client
           .from(_tableName)
           .update(report.toApiUpdateJson())
-          .eq('id', report.id);
-      _log(
-        'Supabase update success: ${report.id} '
+          .eq('id', report.id)
+          .select('id')
+          .maybeSingle();
+      if (data == null) {
+        throw StateError('Update affected no rows. Check ownership and RLS.');
+      }
+      _supabaseLog(
+        'update success id=${report.id} '
         '${hazardReportStatusValue(report.status)} '
         '${report.confidenceScore}/100',
       );
@@ -341,7 +385,16 @@ class HazardReportService {
 
   Future<bool> _tryApiDelete(String id) async {
     try {
-      await _client.from(_tableName).delete().eq('id', id);
+      final data = await _client
+          .from(_tableName)
+          .delete()
+          .eq('id', id)
+          .select('id')
+          .maybeSingle();
+      if (data == null) {
+        throw StateError('Delete affected no rows. Check ownership and RLS.');
+      }
+      _supabaseLog('delete success id=$id');
       return true;
     } catch (error, stackTrace) {
       _log('Supabase delete failed for $id: $error');
@@ -352,7 +405,12 @@ class HazardReportService {
 
   Future<HazardReport> _replaceReport(HazardReport report) async {
     final apiUpdated = await _tryApiUpdate(report);
-    _storageLabel = apiUpdated ? 'Supabase API' : 'Local device storage';
+    if (!apiUpdated && _strictRemote) {
+      throw const SupabaseRemoteRequiredException('verification update');
+    }
+    _storageLabel = apiUpdated
+        ? 'Supabase API'
+        : 'Local device only (not synced)';
     final reports = await _getLocalReports();
     await _saveLocalReports(
       reports.map((item) => item.id == report.id ? report : item).toList(),
@@ -362,6 +420,11 @@ class HazardReportService {
 
   Future<HazardReport> _runAutomatedVerification(HazardReport report) async {
     _log('Starting report verification: ${report.id}');
+    final serverResult = await _tryServerVerification(report);
+    if (serverResult != null) {
+      await _replaceLocalReport(serverResult);
+      return serverResult;
+    }
     try {
       final reports = await _getLocalReports();
       final weatherFuture = report.hasCoordinate
@@ -374,9 +437,20 @@ class HazardReportService {
         hazardType: report.type,
         photoUrl: report.photoUrl,
       );
-      final results = await Future.wait<Object?>([weatherFuture, imageFuture]);
+      final officialFuture = report.hasCoordinate
+          ? _officialContextFor(
+              latitude: report.latitude!,
+              longitude: report.longitude!,
+            )
+          : Future<OfficialHazardContext?>.value();
+      final results = await Future.wait<Object?>([
+        weatherFuture,
+        imageFuture,
+        officialFuture,
+      ]);
       final weather = results[0] as WeatherForecastResponse?;
       final imageVerification = results[1] as HazardImageVerificationResult;
+      final officialContext = results[2] as OfficialHazardContext?;
       final verification = await _verificationService.evaluate(
         report,
         context: ReportVerificationContext(
@@ -384,11 +458,7 @@ class HazardReportService {
           reporterId: report.userId ?? _client.auth.currentUser?.id,
           weather: weather,
           imageVerification: imageVerification,
-          officialHazardContext: const OfficialHazardContext(
-            available: false,
-            reason:
-                'PAGASA/MGB/GeoRisk machine-readable hazard context is not configured in this build.',
-          ),
+          officialHazardContext: officialContext,
           isSameUserDuplicate: _hasSameUserDuplicate(
             report,
             reports,
@@ -400,22 +470,68 @@ class HazardReportService {
         'final confidence: ${verification.confidenceScore}; '
         'status: ${hazardReportStatusValue(verification.status)}',
       );
-      return _replaceReport(
-        _verificationService.applyResult(report, verification),
-      );
+      final localAssessment = _verificationService
+          .applyResult(report, verification)
+          .copyWith(
+            status: HazardReportStatus.pending,
+            isVerified: false,
+            verificationReason:
+                'Unverified community report. Local credibility checks only: '
+                '${verification.reason}',
+          );
+      await _replaceLocalReport(localAssessment);
+      return localAssessment;
     } catch (error, stackTrace) {
       _log('verification failed for ${report.id}: $error');
       debugPrintStack(stackTrace: stackTrace);
-      return _replaceReport(
-        report.copyWith(
-          status: HazardReportStatus.pending,
-          verificationState: HazardVerificationState.failed,
-          verificationReason:
-              'Automated credibility checks failed temporarily. The report remains pending.',
-          updatedAt: DateTime.now(),
-        ),
+      final pending = report.copyWith(
+        status: HazardReportStatus.pending,
+        verificationState: HazardVerificationState.failed,
+        verificationReason:
+            'Automated credibility checks failed temporarily. The report remains pending.',
+        updatedAt: DateTime.now(),
       );
+      await _replaceLocalReport(pending);
+      return pending;
     }
+  }
+
+  Future<HazardReport?> _tryServerVerification(HazardReport report) async {
+    if (_client.auth.currentUser == null || !_looksLikeUuid(report.id)) {
+      return null;
+    }
+    try {
+      final response = await _client.functions.invoke(
+        'verify-hazard-report',
+        body: {'report_id': report.id},
+      );
+      if (response.status < 200 || response.status >= 300) {
+        throw StateError('Edge Function returned HTTP ${response.status}.');
+      }
+      final data = await _client
+          .from(_tableName)
+          .select()
+          .eq('id', report.id)
+          .single();
+      final verified = await _withSignedPhotoUrl(HazardReport.fromJson(data));
+      _storageLabel = 'Supabase API + server verification';
+      return verified;
+    } catch (error, stackTrace) {
+      _log('Server verification unavailable for ${report.id}: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      return null;
+    }
+  }
+
+  bool _looksLikeUuid(String value) => RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  ).hasMatch(value);
+
+  Future<void> _replaceLocalReport(HazardReport report) async {
+    final reports = await _getLocalReports();
+    await _saveLocalReports(
+      reports.map((item) => item.id == report.id ? report : item).toList(),
+    );
   }
 
   Future<WeatherForecastResponse?> _weatherFor({
@@ -428,8 +544,7 @@ class HazardReportService {
         longitude: longitude,
         forecastDays: 1,
       );
-      final currentRain =
-          weather.current.rainMm + weather.current.precipitationMm;
+      final currentRain = weather.current.precipitationMm;
       final forecastRain = weather.days.isEmpty
           ? 0.0
           : weather.days.first.precipitationMm;
@@ -442,6 +557,36 @@ class HazardReportService {
       _log('weather check failed: $error');
       debugPrintStack(stackTrace: stackTrace);
       return null;
+    }
+  }
+
+  Future<OfficialHazardContext> _officialContextFor({
+    required double latitude,
+    required double longitude,
+  }) async {
+    try {
+      final result = await _officialHazardService.queryFloodSusceptibility(
+        latitude: latitude,
+        longitude: longitude,
+      );
+      if (result == null) {
+        return const OfficialHazardContext(
+          available: false,
+          reason:
+              'MGB has no mapped flood-susceptibility polygon at this point.',
+        );
+      }
+      return OfficialHazardContext(
+        available: true,
+        highFloodSusceptibility: result.isElevated,
+        reason:
+            '${result.label}. Static susceptibility is not a current flood incident.',
+      );
+    } catch (error) {
+      return OfficialHazardContext(
+        available: false,
+        reason: 'MGB flood-susceptibility check unavailable: $error',
+      );
     }
   }
 
@@ -466,14 +611,16 @@ class HazardReportService {
     });
   }
 
-  Future<void> _tryApiCreateConfirmation(String reportId, String userId) async {
+  Future<bool> _tryApiCreateConfirmation(String reportId, String userId) async {
     try {
       await _client.from(_confirmationTableName).insert({
         'report_id': reportId,
         'user_id': userId,
       });
+      return true;
     } catch (_) {
       // Local confirmation storage still prevents repeat confirmations on this device.
+      return false;
     }
   }
 
@@ -647,6 +794,8 @@ class HazardReportService {
   double _radians(double degrees) => degrees * math.pi / 180;
 
   void _log(String message) => debugPrint('[Verification] $message');
+
+  void _supabaseLog(String message) => debugPrint('[Supabase] $message');
 }
 
 class _PhotoUpload {
@@ -654,4 +803,14 @@ class _PhotoUpload {
 
   final String path;
   final String? signedUrl;
+}
+
+class SupabaseRemoteRequiredException implements Exception {
+  const SupabaseRemoteRequiredException(this.operation);
+
+  final String operation;
+
+  @override
+  String toString() =>
+      'Supabase $operation failed while strict remote validation is enabled.';
 }

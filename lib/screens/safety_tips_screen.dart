@@ -250,7 +250,7 @@ class _SafetyTipsScreenState extends State<SafetyTipsScreen> {
               const LinearProgressIndicator(minHeight: 5)
             else ...[
               Text(
-                risk?.level ?? 'Safety status unavailable',
+                risk?.displayLevel ?? 'Safety status unavailable',
                 style: TextStyle(
                   color: _riskColor(risk?.level),
                   fontSize: 20,

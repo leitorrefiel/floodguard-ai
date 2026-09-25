@@ -75,6 +75,7 @@ void main() {
             ],
             endpoint: Uri.parse('https://api.open-meteo.com/v1/forecast'),
             jsonSample: '{}',
+            fetchedAt: DateTime.now().toUtc(),
           ),
         ),
       );

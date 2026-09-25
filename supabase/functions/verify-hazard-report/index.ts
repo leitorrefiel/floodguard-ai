@@ -8,6 +8,17 @@ const corsHeaders = {
 
 const floodTypes = new Set(["floodedRoad", "overflowingCanal"]);
 
+type ServerClient = any;
+type VerificationEvidence = Record<string, any>;
+type VerificationResult = {
+  status: string;
+  confidence_score: number;
+  verification_state?: string;
+  verification_reason: string;
+  verification_evidence: VerificationEvidence;
+  last_verified_at: string;
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -49,7 +60,9 @@ Deno.serve(async (req) => {
         weather_support:
           result.verification_evidence.weather?.support === "moderate" ||
           result.verification_evidence.weather?.support === "heavy",
-        hazard_context_support: false,
+        hazard_context_support:
+          result.verification_evidence.official_hazard_context?.code === "HF" ||
+          result.verification_evidence.official_hazard_context?.code === "VHF",
         nearby_report_count:
           result.verification_evidence.nearby_reports?.count ?? 0,
         last_verified_at: result.last_verified_at,
@@ -74,8 +87,8 @@ Deno.serve(async (req) => {
 
 async function evaluateReport(
   report: Record<string, unknown>,
-  supabase: ReturnType<typeof createClient>,
-) {
+  supabase: ServerClient,
+): Promise<VerificationResult> {
   let score = 0;
   const signals: string[] = [];
   const evidence: Record<string, unknown> = {};
@@ -86,7 +99,8 @@ async function evaluateReport(
     return {
       status: "rejected",
       confidence_score: 0,
-      verification_reason: "Rejected because the report has invalid map coordinates.",
+      verification_reason:
+        "Rejected because the report has invalid map coordinates.",
       verification_evidence: {
         location: { valid: false, reason: "Invalid latitude/longitude." },
       },
@@ -111,7 +125,10 @@ async function evaluateReport(
     console.log("[Verification] photo score: +0");
   }
 
-  const image = await verifyPhoto(photoUrl, reportTypeToVerificationValue(String(report.type ?? "other")));
+  const image = await verifyPhoto(
+    photoUrl,
+    reportTypeToVerificationValue(String(report.type ?? "other")),
+  );
   evidence.image = image;
   if (image.unavailable) {
     console.log("[Verification] AI score: +0 unavailable");
@@ -123,7 +140,9 @@ async function evaluateReport(
   } else if (image.matches_reported_hazard && image.confidence >= 0.45) {
     score += 15;
     console.log("[Verification] AI score: +15");
-    signals.push("Photo appears moderately consistent with the reported hazard");
+    signals.push(
+      "Photo appears moderately consistent with the reported hazard",
+    );
   } else if (image.detected_category === "no_visible_hazard") {
     score -= 10;
     console.log("[Verification] AI score: -10");
@@ -133,11 +152,21 @@ async function evaluateReport(
     signals.push("Image verification was uncertain");
   }
 
-  const weather = await getWeather(latitude, longitude, String(report.type ?? ""));
+  const weather = await getWeather(
+    latitude,
+    longitude,
+    String(report.type ?? ""),
+  );
   evidence.weather = weather.evidence;
   score += weather.score;
   console.log(`[Verification] weather score: +${weather.score}`);
   signals.push(...weather.signals);
+
+  const officialHazard = await getOfficialFloodSusceptibility(
+    latitude,
+    longitude,
+  );
+  evidence.official_hazard_context = officialHazard.evidence;
 
   const nearby = await getNearbyReports(report, supabase);
   evidence.nearby_reports = {
@@ -154,15 +183,32 @@ async function evaluateReport(
     );
   }
 
-  evidence.official_hazard_context = {
-    available: false,
-    reason:
-      "PAGASA/MGB/GeoRisk machine-readable hazard context is not configured.",
+  const confirmations = Math.max(
+    0,
+    Math.floor(Number(report.confirmation_count ?? 0)),
+  );
+  const confirmationScore = Math.min(20, confirmations * 10);
+  score += confirmationScore;
+  evidence.community_confirmations = {
+    count: confirmations,
+    score: confirmationScore,
+    limitation: "Community confirmations are not official confirmation.",
   };
-  console.log("[Verification] official hazard context score: +0 unavailable");
+  if (confirmations > 0) {
+    signals.push(
+      `${confirmations} independent community confirmation${confirmations === 1 ? "" : "s"}`,
+    );
+  }
 
   score = Math.max(0, Math.min(100, score));
-  const status = score >= 70 ? "high_confidence" : "pending";
+  const independentlySupported =
+    nearby > 0 ||
+    confirmations >= 2 ||
+    (image.matches_reported_hazard &&
+      image.confidence >= 0.75 &&
+      weather.score > 0);
+  const status =
+    score >= 70 && independentlySupported ? "high_confidence" : "pending";
   console.log(`[Verification] final confidence: ${score}`);
   console.log(`[Verification] status: ${status}`);
 
@@ -170,8 +216,7 @@ async function evaluateReport(
     status,
     confidence_score: score,
     verification_state: "completed",
-    verification_reason:
-      `${labelStatus(status)}. Supporting evidence: ${signals.join(", ")}.`,
+    verification_reason: `${labelStatus(status)}. Supporting evidence: ${signals.join(", ")}.`,
     verification_evidence: evidence,
     last_verified_at: new Date().toISOString(),
   };
@@ -183,7 +228,8 @@ async function verifyPhoto(photoUrl: string, type: string) {
       matches_reported_hazard: false,
       detected_category: "uncertain",
       confidence: 0,
-      reason: "Image verification unavailable because no public uploaded photo URL is available.",
+      reason:
+        "Image verification unavailable because no public uploaded photo URL is available.",
       unavailable: true,
     };
   }
@@ -205,7 +251,7 @@ async function verifyPhoto(photoUrl: string, type: string) {
       {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${Deno.env.get("SUPABASE_ANON_KEY") ?? ""}`,
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY") ?? ""}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -228,10 +274,7 @@ async function verifyPhoto(photoUrl: string, type: string) {
   }
 }
 
-async function createSignedPhotoUrl(
-  supabase: ReturnType<typeof createClient>,
-  path: string,
-) {
+async function createSignedPhotoUrl(supabase: ServerClient, path: string) {
   try {
     const { data, error } = await supabase.storage
       .from("hazard-report-photos")
@@ -275,9 +318,17 @@ async function getWeather(latitude: number, longitude: number, type: string) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`status ${response.status}`);
     const data = await response.json();
-    const currentRain =
-      Number(data.current?.rain ?? 0) + Number(data.current?.precipitation ?? 0);
-    const forecastRain = Number(data.daily?.precipitation_sum?.[0] ?? 0);
+    const precipitation = data.current?.precipitation;
+    const forecastValue = data.daily?.precipitation_sum?.[0];
+    if (
+      typeof precipitation !== "number" ||
+      typeof forecastValue !== "number"
+    ) {
+      throw new Error("weather response is missing precipitation values");
+    }
+    // Open-Meteo precipitation already includes rain; summing both duplicates it.
+    const currentRain = precipitation;
+    const forecastRain = forecastValue;
     const rainRelevant = floodTypes.has(type);
     const signals: string[] = [];
     let score = 0;
@@ -300,6 +351,9 @@ async function getWeather(latitude: number, longitude: number, type: string) {
       signals,
       evidence: {
         available: true,
+        source: "Open-Meteo model estimate",
+        is_observation: false,
+        model_valid_time: data.current?.time ?? null,
         rain_relevant: rainRelevant,
         current_rain_mm: currentRain,
         forecast_rain_mm: forecastRain,
@@ -319,25 +373,99 @@ async function getWeather(latitude: number, longitude: number, type: string) {
   }
 }
 
+async function getOfficialFloodSusceptibility(
+  latitude: number,
+  longitude: number,
+) {
+  const endpoint = new URL(
+    "https://controlmap.mgb.gov.ph/arcgis/rest/services/" +
+      "GeospatialDataInventory/GDI_Detailed_Flood_Susceptibility/FeatureServer/0/query",
+  );
+  endpoint.searchParams.set("geometry", `${longitude},${latitude}`);
+  endpoint.searchParams.set("geometryType", "esriGeometryPoint");
+  endpoint.searchParams.set("inSR", "4326");
+  endpoint.searchParams.set("spatialRel", "esriSpatialRelIntersects");
+  endpoint.searchParams.set("outFields", "FloodSusc");
+  endpoint.searchParams.set("returnGeometry", "false");
+  endpoint.searchParams.set("f", "json");
+  try {
+    const response = await fetch(endpoint, {
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    const data = await response.json();
+    const code = String(
+      data.features?.[0]?.attributes?.FloodSusc ?? "",
+    ).toUpperCase();
+    if (!code) {
+      return {
+        supportsFlood: false,
+        evidence: {
+          available: false,
+          source: "DENR-MGB Detailed Flood Susceptibility",
+          reason: "No susceptibility polygon covers the submitted point.",
+        },
+      };
+    }
+    const label =
+      (
+        {
+          VHF: "Very high flood susceptibility",
+          HF: "High flood susceptibility",
+          MF: "Moderate flood susceptibility",
+          LF: "Low flood susceptibility",
+        } as Record<string, string>
+      )[code] ?? `Flood susceptibility: ${code}`;
+    const supportsFlood = code === "VHF" || code === "HF";
+    return {
+      supportsFlood,
+      evidence: {
+        available: true,
+        source: "DENR-MGB Detailed Flood Susceptibility",
+        code,
+        label,
+        checked_at: new Date().toISOString(),
+        limitation:
+          "Static susceptibility is not evidence of a current flood incident.",
+      },
+    };
+  } catch (error) {
+    console.error("[Verification] MGB susceptibility check failed:", error);
+    return {
+      supportsFlood: false,
+      evidence: {
+        available: false,
+        source: "DENR-MGB Detailed Flood Susceptibility",
+        reason: "Official susceptibility service is temporarily unavailable.",
+      },
+    };
+  }
+}
+
 async function getNearbyReports(
   report: Record<string, unknown>,
-  supabase: ReturnType<typeof createClient>,
+  supabase: ServerClient,
 ) {
-  const createdAt = new Date(String(report.created_at ?? new Date().toISOString()));
-  const since = new Date(createdAt.getTime() - 3 * 60 * 60 * 1000).toISOString();
+  const createdAt = new Date(
+    String(report.created_at ?? new Date().toISOString()),
+  );
+  const since = new Date(
+    createdAt.getTime() - 3 * 60 * 60 * 1000,
+  ).toISOString();
   const { data, error } = await supabase
     .from("hazard_reports")
     .select("id,user_id,type,latitude,longitude,created_at,status")
-    .eq("type", report.type)
+    .eq("type", String(report.type ?? "other"))
     .gte("created_at", since);
   if (error || !data) {
     console.error("[Verification] nearby report read failed:", error);
     return 0;
   }
 
-  return data.filter((other) => {
+  return data.filter((other: Record<string, unknown>) => {
     if (String(other.id) === String(report.id)) return false;
-    if (String(other.user_id ?? "") === String(report.user_id ?? "")) return false;
+    if (String(other.user_id ?? "") === String(report.user_id ?? ""))
+      return false;
     const distance = distanceMeters(
       Number(report.latitude),
       Number(report.longitude),
@@ -357,14 +485,14 @@ function distanceMeters(
   const earth = 6371000;
   const dLat = radians(lat2 - lat1);
   const dLon = radians(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(radians(lat1)) * Math.cos(radians(lat2)) *
-      Math.sin(dLon / 2) ** 2;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(radians(lat1)) * Math.cos(radians(lat2)) * Math.sin(dLon / 2) ** 2;
   return earth * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function radians(value: number) {
-  return value * Math.PI / 180;
+  return (value * Math.PI) / 180;
 }
 
 function labelStatus(status: string) {

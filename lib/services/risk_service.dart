@@ -13,6 +13,7 @@ class RiskAssessment {
     required this.temperatureCelsius,
     required this.observedAt,
     required this.actions,
+    required this.dataFreshness,
   });
 
   final String level;
@@ -26,6 +27,10 @@ class RiskAssessment {
   final double temperatureCelsius;
   final String observedAt;
   final List<RiskAction> actions;
+  final WeatherDataFreshness dataFreshness;
+
+  bool get hasCurrentData => dataFreshness == WeatherDataFreshness.fresh;
+  String get displayLevel => level.replaceFirst('Risk', 'Weather Concern');
 
   String get currentRainLabel => '${currentRainMm.toStringAsFixed(1)} mm';
   String get precipitationLabel =>
@@ -54,6 +59,31 @@ class RiskService {
     String locationLabel = 'selected area',
   }) {
     final current = forecast.current;
+    if (forecast.isStale) {
+      return RiskAssessment(
+        level: 'Insufficient current data',
+        score: 0,
+        summary:
+            'Only cached model weather is available. Refresh before making a flood-safety decision.',
+        aiExplanation:
+            'No current FloodGuard estimate was calculated because the weather response is stale.',
+        riskFactors: const ['weather model response is stale'],
+        currentRainMm: current.rainMm,
+        currentPrecipitationMm: current.precipitationMm,
+        forecastRainMm: forecast.days.first.precipitationMm,
+        temperatureCelsius: current.temperatureCelsius,
+        observedAt: current.observedAt,
+        actions: const [
+          RiskAction(
+            title: 'Check official advisories',
+            description:
+                'Use PAGASA and Baliwag CDRRMO updates until current app data is restored.',
+            iconKey: 'alert',
+          ),
+        ],
+        dataFreshness: forecast.freshness,
+      );
+    }
     final maxDailyRain = forecast.days
         .map((day) => day.precipitationMm)
         .fold<double>(0, (max, value) => value > max ? value : max);
@@ -97,6 +127,7 @@ class RiskService {
         nextRainTotal: nextRainTotal,
         locationLabel: locationLabel,
       ),
+      dataFreshness: forecast.freshness,
     );
   }
 
@@ -105,7 +136,8 @@ class RiskService {
     required double currentPrecipitation,
     required double forecastRain,
   }) {
-    final currentLoad = (currentRain > currentPrecipitation
+    final currentLoad =
+        (currentRain > currentPrecipitation
             ? currentRain
             : currentPrecipitation) *
         5;
@@ -139,7 +171,7 @@ class RiskService {
       return 'Light to moderate rain is possible. Check updates before traveling through flood-prone areas.';
     }
     if (currentRain <= 0 && forecastRain <= 2 && nextRainTotal <= 6) {
-      return 'No significant rainfall is detected right now. Continue monitoring weather updates.';
+      return 'No significant rainfall is estimated right now. This does not prove that nearby roads are flood-free.';
     }
     return 'Flood risk is currently limited, but conditions can change when rain intensifies.';
   }
@@ -157,7 +189,7 @@ class RiskService {
     } else if (currentRain > 0 || currentPrecipitation > 0) {
       factors.add('rain is currently detected');
     } else {
-      factors.add('no active rain at the moment');
+      factors.add('the weather model estimates no active rain');
     }
     if (forecastRain >= 50) {
       factors.add('very high forecast rainfall is possible');
@@ -185,7 +217,8 @@ class RiskService {
   }) {
     final roundedScore = score.toStringAsFixed(0);
     final factorText = factors.take(2).join(', ');
-    return 'Local AI model scored $locationLabel as $level ($roundedScore/100) because $factorText.';
+    final displayLevel = level.replaceFirst('Risk', 'Weather Concern');
+    return 'FloodGuard rule-based estimate for $locationLabel is $displayLevel ($roundedScore/100) because $factorText. It is not a trained AI prediction or an official warning.';
   }
 
   List<RiskAction> _actionsFor({
@@ -201,7 +234,8 @@ class RiskService {
       actions.add(
         const RiskAction(
           title: 'Pause non-essential travel',
-          description: 'Active heavy rain is detected. Wait for rainfall to weaken before leaving.',
+          description:
+              'Active heavy rain is detected. Wait for rainfall to weaken before leaving.',
           iconKey: 'route',
         ),
       );
@@ -211,7 +245,8 @@ class RiskService {
       actions.add(
         const RiskAction(
           title: 'Prepare flood essentials',
-          description: 'Pack water, medicine, power bank, flashlight, and important documents early.',
+          description:
+              'Pack water, medicine, power bank, flashlight, and important documents early.',
           iconKey: 'bag',
         ),
       );
@@ -221,17 +256,20 @@ class RiskService {
       actions.addAll(const [
         RiskAction(
           title: 'Move valuables higher',
-          description: 'Keep documents, chargers, medicine, and essentials above floor level.',
+          description:
+              'Keep documents, chargers, medicine, and essentials above floor level.',
           iconKey: 'move_up',
         ),
         RiskAction(
           title: 'Avoid flooded roads',
-          description: 'Do not walk or drive through floodwater, especially at night.',
+          description:
+              'Do not walk or drive through floodwater, especially at night.',
           iconKey: 'route',
         ),
         RiskAction(
           title: 'Prepare to evacuate',
-          description: 'Check the nearest evacuation center and keep your phone charged.',
+          description:
+              'Check the nearest evacuation center and keep your phone charged.',
           iconKey: 'evacuate',
         ),
       ]);
@@ -239,12 +277,14 @@ class RiskService {
       actions.addAll(const [
         RiskAction(
           title: 'Watch rain intensity',
-          description: 'Refresh the live forecast and monitor if rain gets stronger in the next hours.',
+          description:
+              'Refresh the model forecast and monitor if rain gets stronger in the next hours.',
           iconKey: 'monitor',
         ),
         RiskAction(
           title: 'Avoid low-lying streets',
-          description: 'Choose wider roads and avoid canals, riverbanks, and poor-drainage areas.',
+          description:
+              'Choose wider roads and avoid canals, riverbanks, and poor-drainage areas.',
           iconKey: 'route',
         ),
       ]);
@@ -252,12 +292,14 @@ class RiskService {
       actions.addAll(const [
         RiskAction(
           title: 'Keep alerts enabled',
-          description: 'Risk is low, but stronger rain can still change local conditions quickly.',
+          description:
+              'Risk is low, but stronger rain can still change local conditions quickly.',
           iconKey: 'monitor',
         ),
         RiskAction(
           title: 'Check route before travel',
-          description: 'Look for reports of ponding or blocked drainage before passing flood-prone roads.',
+          description:
+              'Look for reports of ponding or blocked drainage before passing flood-prone roads.',
           iconKey: 'route',
         ),
       ]);
@@ -265,12 +307,14 @@ class RiskService {
       actions.addAll(const [
         RiskAction(
           title: 'Stay weather-aware',
-          description: 'No urgent flood signal is detected, but keep alerts enabled.',
+          description:
+              'No urgent signal is present in available model data, but local flooding may still be unreported.',
           iconKey: 'monitor',
         ),
         RiskAction(
           title: 'Report blocked drainage',
-          description: 'If you notice clogged drains nearby, report them before rainfall increases.',
+          description:
+              'If you notice clogged drains nearby, report them before rainfall increases.',
           iconKey: 'drainage',
         ),
       ]);
@@ -280,7 +324,8 @@ class RiskService {
       actions.add(
         const RiskAction(
           title: 'Check nearby street drainage',
-          description: 'Street-level flooding usually starts near clogged drains and low road sections.',
+          description:
+              'Street-level flooding usually starts near clogged drains and low road sections.',
           iconKey: 'drainage',
         ),
       );
@@ -289,7 +334,8 @@ class RiskService {
     actions.add(
       const RiskAction(
         title: 'Keep emergency contacts ready',
-        description: 'Save LGU, barangay, and family contacts before conditions worsen.',
+        description:
+            'Save LGU, barangay, and family contacts before conditions worsen.',
         iconKey: 'phone',
       ),
     );

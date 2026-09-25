@@ -1,21 +1,48 @@
 # FloodGuard AI
 
-FloodGuard AI is a Flutter mobile-app prototype for flood preparedness in the Philippines. It supports SDG 13: Climate Action through localized risk information, early-warning guidance, evacuation-center discovery, community hazard reporting, and safety tips.
+FloodGuard is a Flutter flood-preparedness app focused on Baliwag, Bulacan. The
+normal runtime does not ship demo flood, hazard, or facility markers.
 
-## Week 2 prototype
+## Active data sources
 
-- Home dashboard with a transparent placeholder risk status
-- Flood risk details and recommended actions
-- Evacuation-center list and safe-route placeholder
-- Hazard-report form with local placeholder submission
-- Safety checklist and emergency information
-- Organized `screens`, `widgets`, `models`, `services`, `utils`, and `assets` folders
+- Open-Meteo provides modelled current conditions and hourly/daily forecasts.
+  These values are labelled as model estimates, not rain-gauge observations.
+- RainViewer provides a dynamic historical radar timeline when its coverage mask
+  confirms coverage at the selected point. Future nowcast frames are not used.
+- DENR-MGB provides the static Detailed Flood Susceptibility map and point
+  context. Susceptibility is never presented as a current flood incident.
+- Supabase stores authenticated community reports, photos, confirmations, alert
+  history, and notification preferences when the production schema is deployed.
 
-## Run locally
+PAGASA advisories remain official external references because no documented
+public machine API was verified for this integration. No verified machine-readable
+Baliwag safety-facility register or public near-real-time rain-gauge API is bundled.
+The app therefore shows an honest empty state instead of invented records.
+
+## Run and verify
 
 ```bash
 flutter pub get
+flutter analyze
+flutter test
 flutter run
 ```
 
-This prototype intentionally uses placeholder data. Production alerts will only be enabled after integration with verified weather, water-level, map, and local-government sources.
+No Supabase project URL or key is checked into the application. Supply values
+copied from the intended project's API settings:
+
+```bash
+flutter run --dart-define=SUPABASE_URL=https://PROJECT.supabase.co --dart-define=SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
+```
+
+Developer-only notification controls are excluded from ordinary debug builds.
+Enable them explicitly with:
+
+```bash
+flutter run --dart-define=FLOODGUARD_DEVELOPER_MODE=true
+```
+
+See [Production Readiness](docs/production_readiness.md) for data provenance,
+deployment steps, security migration, Firebase blockers, and known limitations.
+See [Supabase Backend Recovery](SUPABASE_RECOVERY.md) for the exact
+configuration and remote-only validation procedure.

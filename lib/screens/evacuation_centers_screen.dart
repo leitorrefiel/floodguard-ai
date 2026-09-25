@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:io';
 import 'dart:typed_data';
@@ -7,13 +8,15 @@ import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
 
-import '../data/demo_map_data.dart';
 import '../models/hazard_report.dart';
 import '../models/map_hazard.dart';
 import '../services/device_location_service.dart';
 import '../services/hazard_map_service.dart';
+import '../services/official_hazard_service.dart';
+import '../services/weather_layer_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
+import '../widgets/data_source_link.dart';
 
 enum HazardMapInitialMode { general, facilities }
 
@@ -56,6 +59,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
   final _locationService = DeviceLocationService();
   final _hazardMapService = HazardMapService();
+  final _officialHazardService = OfficialHazardService();
+  final _weatherLayerService = WeatherLayerService();
   final _sheetController = DraggableScrollableController();
 
   ml.MapLibreMapController? _mapController;
@@ -70,6 +75,17 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   bool _showFloodHazard = true;
   bool _showHazards = true;
   bool _showFacilities = true;
+  bool _showRadar = false;
+  bool _showSusceptibility = false;
+  bool _isLoadingRadar = false;
+  bool _isPlayingRadar = false;
+  double _radarOpacity = .62;
+  RadarTimeline? _radarTimeline;
+  int _radarFrameIndex = 0;
+  String? _radarError;
+  OfficialFloodSusceptibility? _susceptibility;
+  String? _officialHazardError;
+  Timer? _radarTimer;
   bool _styleReady = false;
   bool _layersInstalled = false;
   bool _isSheetExpanded = false;
@@ -91,11 +107,13 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     }
     _restoreSavedLocation();
     _loadHazardMapData();
+    _loadOfficialContext();
   }
 
   @override
   void dispose() {
     _mapController?.onFeatureTapped.remove(_handleFeatureTap);
+    _radarTimer?.cancel();
     _sheetController.dispose();
     super.dispose();
   }
@@ -111,6 +129,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         _locationUpdatedAt = DateTime.now();
       });
       await _moveCamera(point, zoom: 15.4);
+      await _loadOfficialContext();
+      if (_showRadar) await _loadRadar();
     }
   }
 
@@ -122,10 +142,19 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     try {
       final data = await _hazardMapService.load();
       if (!mounted) return;
-      setState(() => _mapData = data);
-      await _updateMapSources();
-      if (!await _focusInitialReport()) {
-        if (_isFacilityMode) await _focusNearestFacility(showMessage: false);
+      setState(() {
+        _mapData = data;
+        _isLoadingMapData = false;
+      });
+      try {
+        await _updateMapSources().timeout(const Duration(seconds: 8));
+        if (!await _focusInitialReport()) {
+          if (_isFacilityMode) await _focusNearestFacility(showMessage: false);
+        }
+      } on TimeoutException {
+        debugPrint(
+          '[Hazard Map] MapLibre source update timed out; base map remains usable.',
+        );
       }
     } catch (_) {
       if (!mounted) return;
@@ -138,7 +167,126 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   }
 
   Future<void> _refreshAll() async {
-    await _loadHazardMapData();
+    setState(() => _isRefreshing = true);
+    try {
+      await Future.wait([
+        _loadHazardMapData(),
+        _loadOfficialContext(),
+        if (_showRadar) _loadRadar(),
+      ]);
+    } finally {
+      if (mounted) setState(() => _isRefreshing = false);
+    }
+  }
+
+  Future<void> _loadOfficialContext() async {
+    try {
+      final result = await _officialHazardService.queryFloodSusceptibility(
+        latitude: _assessmentPoint.latitude,
+        longitude: _assessmentPoint.longitude,
+      );
+      if (!mounted) return;
+      setState(() {
+        _susceptibility = result;
+        _officialHazardError = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _susceptibility = null;
+        _officialHazardError = 'Official MGB susceptibility is unavailable.';
+      });
+    }
+  }
+
+  Future<void> _toggleRadar() async {
+    final next = !_showRadar;
+    setState(() {
+      _showRadar = next;
+      if (!next) _isPlayingRadar = false;
+    });
+    _radarTimer?.cancel();
+    final controller = _mapController;
+    if (!next) {
+      if (controller != null) {
+        await _weatherLayerService.setVisible(controller, visible: false);
+      }
+      return;
+    }
+    await _loadRadar();
+  }
+
+  Future<void> _loadRadar() async {
+    if (_isLoadingRadar) return;
+    setState(() {
+      _isLoadingRadar = true;
+      _radarError = null;
+    });
+    try {
+      final timeline = await _weatherLayerService.loadTimeline(
+        latitude: _assessmentPoint.latitude,
+        longitude: _assessmentPoint.longitude,
+      );
+      if (!timeline.hasCoverage) {
+        throw const RadarException('Radar unavailable for this area.');
+      }
+      if (!mounted) return;
+      setState(() {
+        _radarTimeline = timeline;
+        _radarFrameIndex = timeline.frames.length - 1;
+      });
+      await _showSelectedRadarFrame();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _radarTimeline = null;
+        _radarError = error is RadarException
+            ? error.message
+            : 'Radar is temporarily unavailable.';
+      });
+    } finally {
+      if (mounted) setState(() => _isLoadingRadar = false);
+    }
+  }
+
+  Future<void> _showSelectedRadarFrame() async {
+    final controller = _mapController;
+    final timeline = _radarTimeline;
+    if (controller == null || timeline == null || !_styleReady) return;
+    final index = _radarFrameIndex.clamp(0, timeline.frames.length - 1);
+    await _weatherLayerService.showFrame(
+      controller,
+      timeline: timeline,
+      frame: timeline.frames[index],
+      opacity: _radarOpacity,
+      belowLayerId: _floodPointLayerId,
+    );
+  }
+
+  void _toggleRadarPlayback() {
+    final timeline = _radarTimeline;
+    if (timeline == null || timeline.frames.length < 2) return;
+    setState(() => _isPlayingRadar = !_isPlayingRadar);
+    _radarTimer?.cancel();
+    if (!_isPlayingRadar) return;
+    _radarTimer = Timer.periodic(const Duration(milliseconds: 850), (_) {
+      if (!mounted || !_isPlayingRadar) return;
+      setState(() {
+        _radarFrameIndex = (_radarFrameIndex + 1) % timeline.frames.length;
+      });
+      _showSelectedRadarFrame();
+    });
+  }
+
+  Future<void> _toggleSusceptibility() async {
+    setState(() => _showSusceptibility = !_showSusceptibility);
+    final controller = _mapController;
+    if (controller == null || !_styleReady) return;
+    await _officialHazardService.installLayer(
+      controller,
+      visible: _showSusceptibility,
+      belowLayerId: _floodPointLayerId,
+    );
   }
 
   Future<bool> _focusInitialReport() async {
@@ -184,6 +332,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       });
       await _moveCamera(point, zoom: 15.6);
       await _updateMapSources();
+      await _loadOfficialContext();
+      if (_showRadar) await _loadRadar();
     } on LocationAccessException catch (error) {
       if (mounted) _message(error.message);
     } finally {
@@ -513,6 +663,14 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
     _layersInstalled = true;
     await _updateMapSources();
+    await _officialHazardService.installLayer(
+      controller,
+      visible: _showSusceptibility,
+      belowLayerId: _floodPointLayerId,
+    );
+    if (_showRadar && _radarTimeline != null) {
+      await _showSelectedRadarFrame();
+    }
   }
 
   Future<void> _updateMapSources() async {
@@ -578,6 +736,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           Positioned.fill(child: ClipRect(child: _mapView())),
           _topBar(context),
           _mapQuickActions(),
+          if (_showRadar) _radarControlPanel(),
           if (_isLoadingMapData || _mapDataError != null) _mapStateChip(),
           _bottomSheet(context),
         ],
@@ -609,6 +768,8 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       _styleReady = true;
       _layersInstalled = false;
       _markerImagesInstalled = false;
+      _officialHazardService.reset();
+      _weatherLayerService.reset();
       _installMapLayers();
     },
     onMapClick: _handleMapTap,
@@ -672,7 +833,21 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
           ),
           const SizedBox(height: 8),
           _MapActionButton(
-            label: 'Flood',
+            label: 'Radar',
+            icon: Icons.radar_outlined,
+            selected: _showRadar,
+            onPressed: _isLoadingRadar ? null : _toggleRadar,
+          ),
+          const SizedBox(height: 8),
+          _MapActionButton(
+            label: 'MGB Static',
+            icon: Icons.layers_outlined,
+            selected: _showSusceptibility,
+            onPressed: _toggleSusceptibility,
+          ),
+          const SizedBox(height: 8),
+          _MapActionButton(
+            label: 'Reports',
             icon: Icons.flood_outlined,
             selected: _showFloodHazard,
             onPressed: _toggleFloodZones,
@@ -695,6 +870,115 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       ],
     ),
   );
+
+  Widget _radarControlPanel() {
+    final timeline = _radarTimeline;
+    final frame = timeline == null || timeline.frames.isEmpty
+        ? null
+        : timeline.frames[_radarFrameIndex.clamp(
+            0,
+            timeline.frames.length - 1,
+          )];
+    return Positioned(
+      top: 88,
+      left: 14,
+      right: 118,
+      child: Material(
+        color: Colors.white.withValues(alpha: .96),
+        elevation: 4,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: timeline == null ? null : _toggleRadarPlayback,
+                    tooltip: _isPlayingRadar
+                        ? 'Pause radar'
+                        : 'Play radar history',
+                    icon: Icon(
+                      _isPlayingRadar ? Icons.pause : Icons.play_arrow,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _radarError ??
+                          (frame == null
+                              ? 'Loading radar history...'
+                              : 'Radar ${_formatRadarTime(frame.time)}'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (timeline != null && timeline.frames.length > 1)
+                Slider(
+                  value: _radarFrameIndex.toDouble(),
+                  min: 0,
+                  max: (timeline.frames.length - 1).toDouble(),
+                  divisions: timeline.frames.length - 1,
+                  label: frame == null ? null : _formatRadarTime(frame.time),
+                  onChanged: (value) {
+                    _radarTimer?.cancel();
+                    setState(() {
+                      _isPlayingRadar = false;
+                      _radarFrameIndex = value.round();
+                    });
+                    _showSelectedRadarFrame();
+                  },
+                ),
+              Row(
+                children: [
+                  const Icon(Icons.opacity, size: 16),
+                  Expanded(
+                    child: Slider(
+                      value: _radarOpacity,
+                      min: .2,
+                      max: 1,
+                      onChanged: (value) {
+                        setState(() => _radarOpacity = value);
+                        final controller = _mapController;
+                        if (controller != null) {
+                          _weatherLayerService.setOpacity(controller, value);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const Row(
+                children: [
+                  _RadarLegendColor(color: Color(0xFF45A3E5), label: 'Light'),
+                  SizedBox(width: 8),
+                  _RadarLegendColor(
+                    color: Color(0xFFFFD43B),
+                    label: 'Moderate',
+                  ),
+                  SizedBox(width: 8),
+                  _RadarLegendColor(color: Color(0xFFEF4444), label: 'Heavy'),
+                ],
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Historical composite reflectivity. Philippines source listed by RainViewer: Panahon.gov.ph.',
+                style: TextStyle(fontSize: 9, color: AppTheme.muted),
+              ),
+              const DataSourceLink.rainViewer(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _mapStateChip() => Positioned(
     top: 72,
@@ -859,7 +1143,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '$level flood risk',
+                  level,
                   style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     fontSize: 16,
@@ -881,7 +1165,6 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                       _reportCountsLabel,
                       style: const TextStyle(fontSize: 13),
                     ),
-                    if (_hasDemoData && !compact) const _DemoBadge(),
                   ],
                 ),
                 if (!compact) ...[
@@ -973,10 +1256,6 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                       : '${facilities.length} mapped safety facilities${nearest == null ? '' : ', nearest $nearest away'}.',
                   style: const TextStyle(fontSize: 13),
                 ),
-                if (_hasDemoData && !compact) ...[
-                  const SizedBox(height: 6),
-                  const _DemoBadge(),
-                ],
               ],
             ),
           ),
@@ -999,9 +1278,15 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     final floods = _floodReports.length;
     final hazards = _hazardReports.length;
     final unmapped = _mapData?.unmappedReportCount ?? 0;
+    final susceptibility = _susceptibility;
+    final officialContext = susceptibility == null
+        ? (_officialHazardError ?? 'No MGB polygon at the selected point')
+        : '${susceptibility.label} (static susceptibility, not a current flood)';
     return Text(
-      'Current layers show community reports: $floods flood, '
-      '$hazards drainage/waterway hazard${unmapped > 0 ? ', $unmapped without coordinates' : ''}.',
+      'Community reports: $floods flood, $hazards other hazard'
+      '${unmapped > 0 ? ', $unmapped without submitted coordinates' : ''}. '
+      'Report data: ${_mapData?.storageLabel ?? 'unavailable'}. '
+      'MGB: $officialContext.',
       style: const TextStyle(color: Color(0xFF5B6677), fontSize: 12),
     );
   }
@@ -1069,7 +1354,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Flooded Locations',
+          'Community Flood Reports',
           style: Theme.of(
             context,
           ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
@@ -1078,9 +1363,9 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         if (reports.isEmpty)
           const _EmptyLayerCard(
             icon: Icons.flood_outlined,
-            title: 'No mapped flooded-road reports',
+            title: 'No mapped community flood reports',
             detail:
-                'Flood locations appear here when reports have coordinates.',
+                'No active submitted report with a genuine coordinate is available.',
           )
         else
           ...reports
@@ -1177,17 +1462,9 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   }
 
   Map<String, dynamic> _floodGeoJson() {
-    return _featureCollection(
-      _floodReports.map((item) {
-        final report = item.report;
-        return _circlePolygonFeature(
-          id: 'flood-${report.id}',
-          center: _latLng(item.coordinate),
-          radiusMeters: _floodRadiusMeters(report.severity),
-          properties: _floodProperties(item),
-        );
-      }).toList(),
-    );
+    // A point report is not evidence that an entire surrounding area is
+    // flooded. Only official polygons belong in an area layer.
+    return _emptyCollection();
   }
 
   Map<String, dynamic> _floodPointGeoJson() {
@@ -1273,28 +1550,22 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
   Map<String, dynamic> _hazardProperties(MappedHazardReport item) {
     final report = item.report;
-    final isDemo = _isDemoReport(item);
     return {
       'kind': 'hazard',
       'id': 'hazard-${report.id}',
-      'title': isDemo
-          ? 'DEMO ${hazardTypeLabel(report.type)}'
-          : report.displayType,
+      'title': report.displayType,
       'severity': report.severity,
       'location': report.location,
       'description': report.description.isEmpty
           ? 'No description provided.'
           : report.description,
       'time': _formatDateTime(report.createdAt),
-      'status': isDemo
-          ? 'DEMO DATA - not a real report'
-          : '${hazardReportStatusLabel(report.status)} Community Report',
+      'status': '${hazardReportStatusLabel(report.status)} Community Report',
       'verificationState': hazardVerificationStateLabel(
         report.verificationState,
       ),
       'confidenceScore': report.confidenceScore,
       'verificationReason': report.verificationReason,
-      'isDemo': isDemo,
       'photoUrl': report.photoUrl,
       'source': report.source,
       'color': _hazardHexColor(item),
@@ -1309,26 +1580,22 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   Map<String, dynamic> _floodProperties(MappedHazardReport item) {
     final report = item.report;
     final color = _severityColor(report.severity);
-    final isDemo = _isDemoReport(item);
     return {
       'kind': 'flood',
       'id': 'flood-${report.id}',
-      'title': isDemo ? 'DEMO Flooded Road' : 'Flooded Road',
+      'title': 'Community Flood Report',
       'severity': report.severity,
       'location': report.location,
       'description': report.description.isEmpty
           ? 'No description provided.'
           : report.description,
       'time': _formatDateTime(report.createdAt),
-      'status': isDemo
-          ? 'DEMO DATA - not a real flood report'
-          : '${hazardReportStatusLabel(report.status)} Community Report',
+      'status': '${hazardReportStatusLabel(report.status)} Community Report',
       'verificationState': hazardVerificationStateLabel(
         report.verificationState,
       ),
       'confidenceScore': report.confidenceScore,
       'verificationReason': report.verificationReason,
-      'isDemo': isDemo,
       'photoUrl': report.photoUrl,
       'source': report.source,
       'color': _hex(color),
@@ -1347,18 +1614,11 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     'location': facility.address,
     'latitude': facility.coordinate.latitude,
     'longitude': facility.coordinate.longitude,
-    'description': _isDemoFacility(facility)
-        ? 'TEST FACILITY - development marker only.'
-        : facility.recommended
+    'description': facility.recommended
         ? 'Recommended reference site. Verify opening status with the LGU.'
         : 'Reference facility. Verify status before emergency use.',
-    'time': _isDemoFacility(facility) ? 'Demo facility' : 'Reference facility',
-    'status': _isDemoFacility(facility)
-        ? 'DEMO DATA - not an official facility'
-        : facility.recommended
-        ? 'Recommended'
-        : 'Reference',
-    'isDemo': _isDemoFacility(facility),
+    'time': 'Reference facility',
+    'status': facility.recommended ? 'Recommended' : 'Reference',
     'color': _facilityHexColor(facility),
     'opacity': 1,
     'radius': _facilityRadius(facility),
@@ -1383,37 +1643,6 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       'coordinates': [point.longitude, point.latitude],
     },
   };
-
-  Map<String, dynamic> _circlePolygonFeature({
-    required String id,
-    required ml.LatLng center,
-    required double radiusMeters,
-    required Map<String, dynamic> properties,
-  }) {
-    final coordinates = <List<double>>[];
-    final latRadians = _radians(center.latitude);
-    final metersPerLat = 111320.0;
-    final metersPerLng = 111320.0 * math.cos(latRadians);
-
-    for (var i = 0; i <= 72; i++) {
-      final angle = 2 * math.pi * i / 72;
-      final lat =
-          center.latitude + (math.sin(angle) * radiusMeters / metersPerLat);
-      final lng =
-          center.longitude + (math.cos(angle) * radiusMeters / metersPerLng);
-      coordinates.add([lng, lat]);
-    }
-
-    return {
-      'type': 'Feature',
-      'id': id,
-      'properties': properties,
-      'geometry': {
-        'type': 'Polygon',
-        'coordinates': [coordinates],
-      },
-    };
-  }
 
   Map<String, dynamic> _featureCollection(
     List<Map<String, dynamic>> features,
@@ -1440,11 +1669,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     );
   }
 
-  List<MappedHazardReport> get _mappedReports => [
-    ...?_mapData?.reports,
-    if (useDemoFloodData) ...DemoMapData.floodReports,
-    if (useDemoHazardData) ...DemoMapData.hazardReports,
-  ];
+  List<MappedHazardReport> get _mappedReports => [...?_mapData?.reports];
 
   List<MappedHazardReport> get _floodReports => _mappedReports
       .where((item) => item.report.type == HazardType.floodedRoad)
@@ -1454,10 +1679,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       .where((item) => item.report.type != HazardType.floodedRoad)
       .toList();
 
-  List<EmergencyFacility> get _facilities => [
-    ...?_mapData?.facilities,
-    if (useDemoFacilityData) ...DemoMapData.facilities,
-  ];
+  List<EmergencyFacility> get _facilities => [...?_mapData?.facilities];
 
   List<EmergencyFacility> get _nearbyFacilities {
     final facilities = [..._facilities];
@@ -1475,38 +1697,31 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     return facilities;
   }
 
-  bool get _hasDemoData =>
-      useDemoFloodData || useDemoHazardData || useDemoFacilityData;
-
   String get _reportCountsLabel =>
       '${_floodReports.length} floods - ${_hazardReports.length} hazards - ${_facilities.length} facilities';
 
-  bool _isDemoReport(MappedHazardReport item) =>
-      item.report.id.startsWith('demo-');
-
-  bool _isDemoFacility(EmergencyFacility facility) =>
-      facility.id.startsWith('demo-');
-
   String get _reportedFloodLevel {
     final reports = _floodReports
-        .where((item) => _isDemoReport(item) || item.report.contributesToRisk)
+        .where((item) => item.report.contributesToRisk)
         .toList();
-    if (reports.isEmpty) return 'Minimal';
+    if (reports.isEmpty) return 'No confirmed incidents';
     if (reports.any((item) => item.report.severity == 'Critical')) {
-      return 'Critical';
+      return 'Critical reported flooding';
     }
-    if (reports.any((item) => item.report.severity == 'High')) return 'High';
+    if (reports.any((item) => item.report.severity == 'High')) {
+      return 'High reported flooding';
+    }
     if (reports.any((item) => item.report.severity == 'Moderate')) {
-      return 'Moderate';
+      return 'Moderate reported flooding';
     }
-    return 'Low';
+    return 'Low reported flooding';
   }
 
   String get _reportStatusSummary {
     final floods = _floodReports.length;
     final hazards = _hazardReports.length;
     final supportedFloods = _floodReports
-        .where((item) => _isDemoReport(item) || item.report.contributesToRisk)
+        .where((item) => item.report.contributesToRisk)
         .length;
     if (floods == 0 && hazards == 0) {
       return 'No mapped flood or drainage hazard reports are currently available nearby.';
@@ -1530,8 +1745,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     return '${elapsed.inDays}d ago';
   }
 
-  String get _dataFreshnessLabel =>
-      _hasDemoData ? 'DEMO' : _locationUpdatedLabel;
+  String get _dataFreshnessLabel => _locationUpdatedLabel;
 
   String _distanceLabel(EmergencyFacility facility) {
     final meters = _distanceMeters(
@@ -1542,21 +1756,13 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     return '${(meters / 1000).toStringAsFixed(1)} km';
   }
 
-  double _floodRadiusMeters(String severity) => switch (severity) {
-    'Critical' => 180,
-    'High' => 150,
-    'Moderate' => 120,
-    'Low' => 90,
-    _ => 100,
-  };
-
-  Color _riskColor(String level) => switch (level) {
-    'Critical' => const Color(0xFF991B1B),
-    'High' => const Color(0xFFDC2626),
-    'Moderate' => const Color(0xFFF59E0B),
-    'Low' => const Color(0xFF22C55E),
-    _ => AppTheme.blue,
-  };
+  Color _riskColor(String level) {
+    if (level.startsWith('Critical')) return const Color(0xFF991B1B);
+    if (level.startsWith('High')) return const Color(0xFFDC2626);
+    if (level.startsWith('Moderate')) return const Color(0xFFF59E0B);
+    if (level.startsWith('Low')) return const Color(0xFF22C55E);
+    return AppTheme.blue;
+  }
 
   Color _severityColor(String severity) => switch (severity) {
     'Critical' => const Color(0xFF991B1B),
@@ -1586,29 +1792,10 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       facility.recommended ? 22 : 21;
 
   String _hazardHexColor(MappedHazardReport item) {
-    if (_isDemoReport(item)) {
-      return switch (item.report.type) {
-        HazardType.cloggedDrainage => '#F97316',
-        HazardType.blockedWaterway => '#7C3AED',
-        HazardType.overflowingCanal => '#EA580C',
-        HazardType.roadObstruction => '#B45309',
-        HazardType.damagedDrainage => '#475569',
-        HazardType.other => '#64748B',
-        HazardType.floodedRoad => _hex(_severityColor(item.report.severity)),
-      };
-    }
     return _hex(_severityColor(item.report.severity));
   }
 
   String _facilityHexColor(EmergencyFacility facility) {
-    if (_isDemoFacility(facility)) {
-      return switch (facility.type) {
-        EmergencyFacilityType.hospital => '#0EA5E9',
-        EmergencyFacilityType.fireStation => '#0891B2',
-        EmergencyFacilityType.evacuation => '#059669',
-        EmergencyFacilityType.school => '#10B981',
-      };
-    }
     if (facility.recommended) return '#16A34A';
     return switch (facility.type) {
       EmergencyFacilityType.hospital => '#DC2626',
@@ -1801,6 +1988,18 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   String _hex(Color color) =>
       '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
 
+  String _formatRadarTime(DateTime value) {
+    final local = value.toLocal();
+    final hour = local.hour == 0
+        ? 12
+        : local.hour > 12
+        ? local.hour - 12
+        : local.hour;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final period = local.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $period PHT';
+  }
+
   String _formatDateTime(DateTime value) {
     final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
     final minute = value.minute.toString().padLeft(2, '0');
@@ -1862,25 +2061,20 @@ class _LegendItem extends StatelessWidget {
   );
 }
 
-class _DemoBadge extends StatelessWidget {
-  const _DemoBadge();
+class _RadarLegendColor extends StatelessWidget {
+  const _RadarLegendColor({required this.color, required this.label});
+
+  final Color color;
+  final String label;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFFF7ED),
-      borderRadius: BorderRadius.circular(999),
-      border: Border.all(color: const Color(0xFFF97316)),
-    ),
-    child: const Text(
-      'Demo map markers enabled',
-      style: TextStyle(
-        color: Color(0xFFC2410C),
-        fontSize: 10,
-        fontWeight: FontWeight.w900,
-      ),
-    ),
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(width: 14, height: 8, color: color),
+      const SizedBox(width: 3),
+      Text(label, style: const TextStyle(fontSize: 9)),
+    ],
   );
 }
 
@@ -1986,15 +2180,13 @@ class _HazardReportCard extends StatelessWidget {
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
       subtitle: Text(
-        '${_isDemo ? 'DEMO DATA - ' : ''}${item.report.location}\n${item.report.severity} severity',
+        '${item.report.location}\n${item.report.severity} severity',
       ),
       isThreeLine: true,
       trailing: const Icon(Icons.info_outline),
       onTap: onTap,
     ),
   );
-
-  bool get _isDemo => item.report.id.startsWith('demo-');
 
   Color _color(String severity) => switch (severity) {
     'Critical' => const Color(0xFF991B1B),
@@ -2045,7 +2237,7 @@ class _FacilityCard extends StatelessWidget {
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
       subtitle: Text(
-        '${_isDemo ? 'TEST FACILITY - ' : ''}${facility.address}\n$distanceLabel away - ${_detail(facility)}',
+        '${facility.address}\n$distanceLabel away - ${_detail(facility)}',
       ),
       isThreeLine: true,
       trailing: TextButton.icon(
@@ -2057,12 +2249,7 @@ class _FacilityCard extends StatelessWidget {
     ),
   );
 
-  bool get _isDemo => facility.id.startsWith('demo-');
-
   String _detail(EmergencyFacility facility) {
-    if (_isDemo) {
-      return 'Development marker only, not an official facility.';
-    }
     if (facility.recommended) {
       return 'Recommended reference site, verify opening status with the LGU.';
     }
@@ -2136,8 +2323,6 @@ class _FeatureDetailsSheet extends StatelessWidget {
     final confidenceScore = properties['confidenceScore']?.toString() ?? '';
     final verificationReason =
         properties['verificationReason']?.toString() ?? '';
-    final isDemo =
-        properties['isDemo'] == true || properties['isDemo'] == 'true';
     final isFacility = properties['kind'] == 'facility';
     final kind = properties['kind']?.toString() ?? '';
     final source =
@@ -2191,7 +2376,6 @@ class _FeatureDetailsSheet extends StatelessWidget {
               children: [
                 if (kind.isNotEmpty) _InfoChip(_kindLabel(kind)),
                 if (severity.isNotEmpty) _InfoChip(severity),
-                if (isDemo) const _DemoBadge(),
               ],
             ),
             const SizedBox(height: 14),
@@ -2265,11 +2449,10 @@ class _FeatureDetailsSheet extends StatelessWidget {
 
   String _statusBadgeLabel(String status) {
     final value = status.toLowerCase();
-    if (value.contains('demo')) return 'DEMO';
     if (value.contains('verified')) return 'VERIFIED';
     if (value.contains('resolved')) return 'RESOLVED';
     if (value.contains('pending')) return 'PENDING';
-    if (value.contains('recommended')) return 'OPEN';
+    if (value.contains('recommended')) return 'REFERENCE';
     if (value.contains('reference')) return 'REFERENCE';
     return status.isEmpty ? '' : status.toUpperCase();
   }
@@ -2380,11 +2563,11 @@ class _StatusBadge extends StatelessWidget {
 
   Color get _color {
     final value = label.toLowerCase();
-    if (value.contains('verified') || value.contains('open')) {
+    if (value.contains('verified')) {
       return Colors.green;
     }
     if (value.contains('resolved')) return AppTheme.blue;
-    if (value.contains('demo') || value.contains('reference')) {
+    if (value.contains('reference')) {
       return Colors.orange;
     }
     return const Color(0xFFB45309);

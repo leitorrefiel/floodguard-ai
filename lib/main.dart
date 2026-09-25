@@ -4,20 +4,29 @@ import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'config/supabase_config.dart';
 import 'screens/alerts_screen.dart';
 import 'screens/evacuation_centers_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/reset_password_screen.dart';
 import 'services/notification_service.dart';
+import 'services/supabase_connection_service.dart';
 import 'utils/app_theme.dart';
 
 Future<void> main() async {
   ml.MapLibreMap.useHybridComposition = true;
   WidgetsFlutterBinding.ensureInitialized();
+  final supabaseConfig = SupabaseConfig.fromEnvironment();
   await Supabase.initialize(
-    url: 'https://folbvzmvxqjmfzzssshm.supabase.co',
-    publishableKey: 'sb_publishable_QGecyaWlzS4qVYmjOpralA_gYFyzPAh',
+    url: supabaseConfig.url,
+    publishableKey: supabaseConfig.publishableKey,
+  );
+  unawaited(
+    SupabaseConnectionService(
+      client: Supabase.instance.client,
+      host: supabaseConfig.projectHost,
+    ).verify(),
   );
   await NotificationService.instance.initialize();
   runApp(const FloodGuardApp());

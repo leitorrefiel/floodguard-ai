@@ -13,6 +13,9 @@ class AlertService {
         .from('alerts')
         .select()
         .eq('is_active', true)
+        .or(
+          'expires_at.is.null,expires_at.gt.${DateTime.now().toUtc().toIso8601String()}',
+        )
         .order('created_at', ascending: false)
         .limit(20);
     return (data as List<dynamic>)

@@ -12,6 +12,7 @@ import '../services/risk_service.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
+import '../widgets/data_source_link.dart';
 import '../widgets/metric_tile.dart';
 import 'alerts_screen.dart';
 import 'community_reports_screen.dart';
@@ -96,7 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       Text(
-                        'AI-Powered Flood Prediction & Early Warning',
+                        'Flood Preparedness & Community Alerts',
                         style: TextStyle(fontSize: 12),
                       ),
                     ],
@@ -136,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'FLOOD RISK',
+                        'FLOODGUARD ESTIMATE',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: AppTheme.blue,
@@ -150,7 +151,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         )
                       else
                         Text(
-                          risk?.level ?? 'Set Location First',
+                          risk?.displayLevel ?? 'Set Location First',
                           style: TextStyle(
                             fontSize: 25,
                             fontWeight: FontWeight.w800,
@@ -160,8 +161,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         _riskError ??
                             risk?.summary ??
-                            'Choose your location to load live rainfall-based flood risk.',
+                            'Choose your location to load a rainfall-based flood-risk estimate.',
                       ),
+                      if (risk != null && risk.observedAt.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Open-Meteo model valid time: ${risk.observedAt}${risk.hasCurrentData ? '' : ' (cached/stale)'}',
+                          style: const TextStyle(
+                            color: AppTheme.muted,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const DataSourceLink.openMeteo(),
+                      ],
                       const SizedBox(height: 14),
                       LinearProgressIndicator(
                         value: (risk?.score ?? 0) / 100,
@@ -176,15 +188,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         children: [
                           MetricTile(
                             icon: Icons.cloudy_snowing,
-                            label: 'Rain now',
+                            label: 'Rain estimate',
                             value: risk?.currentRainLabel ?? '--',
-                            caption: 'Live',
+                            caption: 'Modelled',
                           ),
                           MetricTile(
                             icon: Icons.cloud,
                             label: 'Weather',
                             value: risk?.temperatureLabel ?? '--',
-                            caption: 'Open-Meteo',
+                            caption: 'Model data',
                           ),
                           MetricTile(
                             icon: Icons.water,
@@ -550,6 +562,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 2),
                       Text(status.facilityLine!),
                     ],
+                    const SizedBox(height: 4),
+                    Text(
+                      'Report data: ${status.storageLabel}',
+                      style: const TextStyle(
+                        color: AppTheme.muted,
+                        fontSize: 11,
+                      ),
+                    ),
                   ] else
                     const Text('No mapped reports currently available.'),
                 ],
@@ -718,7 +738,9 @@ class _AreaStatus {
   final String storageLabel;
 
   String get floodLine {
-    if (floodReports == 0) return 'No active flood reports nearby.';
+    if (floodReports == 0) {
+      return 'No active community flood reports are available nearby. This does not confirm flood-free conditions.';
+    }
     final label = floodReports == 1 ? 'location' : 'locations';
     return '$floodReports reported flooded $label nearby.';
   }
