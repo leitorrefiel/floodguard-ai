@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "dataset_scope": "Baliwag CDRRMO-approved facilities",
+  "verified_on": "YYYY-MM-DD",
+  "facilities": [
+    {
+      "id": "official-stable-id",
+      "name": "Exact official facility name",
+      "address": "Complete official address",
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "category": "evacuation_center | hospital | fire_station | emergency_office",
+      "authority_source_name": "Publishing government office",
+      "authority_source_url": "https://official-source.example/record",
+      "coordinate_source_name": "Coordinate publisher or survey source",
+      "coordinate_source_url": "https://coordinate-source.example/record",
+      "verification_date": "YYYY-MM-DD",
+      "verification_status": "verified_reference",
+      "operational_status": "Do not write active/open unless a current official notice confirms it"
+    }
+  ]
+}

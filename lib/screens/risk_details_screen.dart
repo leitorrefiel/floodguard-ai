@@ -167,7 +167,7 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
             Text(
               assessment.observedAt.isEmpty
                   ? 'Source: Open-Meteo model forecast'
-                  : 'Updated: ${assessment.observedAt}',
+                  : 'Open-Meteo model valid time: ${assessment.observedAt}',
               style: const TextStyle(fontSize: 12, color: AppTheme.muted),
             ),
             const DataSourceLink.openMeteo(),

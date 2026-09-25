@@ -3,23 +3,30 @@ import 'package:flutter/foundation.dart';
 import '../models/hazard_report.dart';
 import '../models/map_hazard.dart';
 import 'hazard_report_service.dart';
+import 'safety_facility_service.dart';
 
 class HazardMapService {
-  HazardMapService({HazardReportService? reportService})
-    : _reportService = reportService ?? HazardReportService();
+  HazardMapService({
+    HazardReportService? reportService,
+    SafetyFacilityService? facilityService,
+  }) : _reportService = reportService ?? HazardReportService(),
+       _facilityService = facilityService ?? SafetyFacilityService();
 
   final HazardReportService _reportService;
+  final SafetyFacilityService _facilityService;
 
   Future<HazardMapData> load() async {
     final reports = await _reportService.getReports(
       includeCommunityReports: true,
     );
+    final facilities = await _facilityService.loadVerified();
     final mappedReports = <MappedHazardReport>[];
 
     final visibleReports = reports.where(_isVisibleOnMap).toList();
     debugPrint(
       '[Hazard Map] loaded ${reports.length} reports from '
-      '${_reportService.storageLabel}; visible=${visibleReports.length}',
+      '${_reportService.storageLabel}; visible=${visibleReports.length}; '
+      'verified facilities=${facilities.length}',
     );
 
     for (final report in visibleReports.take(20)) {
@@ -41,9 +48,7 @@ class HazardMapService {
     }
 
     return HazardMapData(
-      // No facility is shown until an official LGU or agency record provides
-      // a verifiable category and coordinate.
-      facilities: const [],
+      facilities: facilities,
       reports: mappedReports,
       unmappedReportCount: visibleReports.length - mappedReports.length,
       storageLabel: _reportService.storageLabel,
@@ -70,4 +75,5 @@ String emergencyFacilityTypeLabel(EmergencyFacilityType type) => switch (type) {
   EmergencyFacilityType.school => 'School',
   EmergencyFacilityType.hospital => 'Hospital',
   EmergencyFacilityType.fireStation => 'Fire Station',
+  EmergencyFacilityType.emergencyOffice => 'Emergency Office',
 };

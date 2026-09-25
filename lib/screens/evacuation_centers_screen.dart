@@ -936,6 +936,18 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
                     _showSelectedRadarFrame();
                   },
                 ),
+              if (timeline?.isStale ?? false)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'Radar metadata is stale. Treat this frame as historical only.',
+                    style: TextStyle(
+                      color: Color(0xFFB45309),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
               Row(
                 children: [
                   const Icon(Icons.opacity, size: 16),
@@ -1436,7 +1448,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
             icon: Icons.home_work_outlined,
             title: 'No mapped safety facilities',
             detail:
-                'Facilities appear here once evacuation or safety sites are available.',
+                'Only facilities with verified identity and coordinates appear here. No official evacuation-center list is currently loaded.',
           )
         else
           ...facilities.map(
@@ -1614,11 +1626,12 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     'location': facility.address,
     'latitude': facility.coordinate.latitude,
     'longitude': facility.coordinate.longitude,
-    'description': facility.recommended
-        ? 'Recommended reference site. Verify opening status with the LGU.'
-        : 'Reference facility. Verify status before emergency use.',
-    'time': 'Reference facility',
-    'status': facility.recommended ? 'Recommended' : 'Reference',
+    'description': facility.operationalStatus,
+    'time': _formatDateTime(facility.verifiedAt),
+    'timeLabel': 'Reference verified',
+    'status': 'Verified reference',
+    'source': facility.sourceName,
+    'coordinateSource': facility.coordinateSourceName,
     'color': _facilityHexColor(facility),
     'opacity': 1,
     'radius': _facilityRadius(facility),
@@ -1802,6 +1815,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       EmergencyFacilityType.fireStation => '#F97316',
       EmergencyFacilityType.evacuation => '#16A34A',
       EmergencyFacilityType.school => '#2563EB',
+      EmergencyFacilityType.emergencyOffice => '#0F766E',
     };
   }
 
@@ -1864,6 +1878,11 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
         name: _facilityMarkerImage(EmergencyFacilityType.fireStation),
         icon: Icons.local_fire_department_outlined,
         color: const Color(0xFF0891B2),
+      ),
+      _MarkerImageSpec(
+        name: _facilityMarkerImage(EmergencyFacilityType.emergencyOffice),
+        icon: Icons.emergency_outlined,
+        color: const Color(0xFF0F766E),
       ),
     ];
 
@@ -1944,6 +1963,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     EmergencyFacilityType.school => 'fg-marker-facility-school',
     EmergencyFacilityType.hospital => 'fg-marker-facility-hospital',
     EmergencyFacilityType.fireStation => 'fg-marker-facility-fire',
+    EmergencyFacilityType.emergencyOffice => 'fg-marker-facility-emergency',
   };
 
   String _hazardCode(HazardType type) => switch (type) {
@@ -1961,6 +1981,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     EmergencyFacilityType.school => 'SC',
     EmergencyFacilityType.hospital => 'HP',
     EmergencyFacilityType.fireStation => 'FS',
+    EmergencyFacilityType.emergencyOffice => 'EO',
   };
 
   ml.LatLng _latLng(MapCoordinate coordinate) =>
@@ -1989,14 +2010,14 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
 
   String _formatRadarTime(DateTime value) {
-    final local = value.toLocal();
-    final hour = local.hour == 0
+    final pht = value.toUtc().add(const Duration(hours: 8));
+    final hour = pht.hour == 0
         ? 12
-        : local.hour > 12
-        ? local.hour - 12
-        : local.hour;
-    final minute = local.minute.toString().padLeft(2, '0');
-    final period = local.hour >= 12 ? 'PM' : 'AM';
+        : pht.hour > 12
+        ? pht.hour - 12
+        : pht.hour;
+    final minute = pht.minute.toString().padLeft(2, '0');
+    final period = pht.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $period PHT';
   }
 
@@ -2250,10 +2271,12 @@ class _FacilityCard extends StatelessWidget {
   );
 
   String _detail(EmergencyFacility facility) {
-    if (facility.recommended) {
-      return 'Recommended reference site, verify opening status with the LGU.';
-    }
-    return 'Reference facility, verify status before emergency use.';
+    final date = facility.verifiedAt
+        .toLocal()
+        .toIso8601String()
+        .split('T')
+        .first;
+    return 'Verified reference ($date); opening status unconfirmed.';
   }
 
   IconData _icon(EmergencyFacilityType type) => switch (type) {
@@ -2261,6 +2284,7 @@ class _FacilityCard extends StatelessWidget {
     EmergencyFacilityType.school => Icons.school_outlined,
     EmergencyFacilityType.hospital => Icons.local_hospital_outlined,
     EmergencyFacilityType.fireStation => Icons.local_fire_department_outlined,
+    EmergencyFacilityType.emergencyOffice => Icons.emergency_outlined,
   };
 }
 
@@ -2318,6 +2342,7 @@ class _FeatureDetailsSheet extends StatelessWidget {
     final description = properties['description']?.toString() ?? '';
     final photoUrl = properties['photoUrl']?.toString() ?? '';
     final time = properties['time']?.toString() ?? '';
+    final timeLabel = properties['timeLabel']?.toString() ?? 'Reported';
     final status = properties['status']?.toString() ?? '';
     final verificationState = properties['verificationState']?.toString() ?? '';
     final confidenceScore = properties['confidenceScore']?.toString() ?? '';
@@ -2327,6 +2352,7 @@ class _FeatureDetailsSheet extends StatelessWidget {
     final kind = properties['kind']?.toString() ?? '';
     final source =
         properties['source']?.toString() ?? 'FloodGuard Community Report';
+    final coordinateSource = properties['coordinateSource']?.toString() ?? '';
     final statusBadge = _statusBadgeLabel(status);
 
     return SafeArea(
@@ -2382,7 +2408,7 @@ class _FeatureDetailsSheet extends StatelessWidget {
             if (location.isNotEmpty)
               _MetaLine(Icons.location_on_outlined, location),
             if (time.isNotEmpty)
-              _MetaLine(Icons.schedule_outlined, 'Reported $time'),
+              _MetaLine(Icons.schedule_outlined, '$timeLabel $time'),
             if (source.isNotEmpty) _MetaLine(Icons.person_outline, source),
             if (description.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -2423,6 +2449,8 @@ class _FeatureDetailsSheet extends StatelessWidget {
                 ),
             ],
             _DetailRow('Source', source),
+            if (coordinateSource.isNotEmpty)
+              _DetailRow('Coordinate source', coordinateSource),
             if (isFacility) ...[
               const SizedBox(height: 6),
               SizedBox(

@@ -7,7 +7,13 @@ class MapCoordinate {
   final double longitude;
 }
 
-enum EmergencyFacilityType { evacuation, school, hospital, fireStation }
+enum EmergencyFacilityType {
+  evacuation,
+  school,
+  hospital,
+  fireStation,
+  emergencyOffice,
+}
 
 class EmergencyFacility {
   const EmergencyFacility({
@@ -16,6 +22,12 @@ class EmergencyFacility {
     required this.address,
     required this.coordinate,
     required this.type,
+    required this.sourceName,
+    required this.sourceUrl,
+    required this.coordinateSourceName,
+    required this.coordinateSourceUrl,
+    required this.verifiedAt,
+    required this.operationalStatus,
     this.recommended = false,
   });
 
@@ -24,6 +36,12 @@ class EmergencyFacility {
   final String address;
   final MapCoordinate coordinate;
   final EmergencyFacilityType type;
+  final String sourceName;
+  final String sourceUrl;
+  final String coordinateSourceName;
+  final String coordinateSourceUrl;
+  final DateTime verifiedAt;
+  final String operationalStatus;
   final bool recommended;
 }
 

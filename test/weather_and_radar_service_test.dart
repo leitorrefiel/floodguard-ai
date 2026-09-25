@@ -126,6 +126,17 @@ void main() {
       expect(timeline.hasCoverage, isFalse);
     },
   );
+
+  test('radar metadata older than the freshness window is stale', () {
+    final timeline = RadarTimeline(
+      host: 'https://tilecache.rainviewer.com',
+      generatedAt: DateTime.now().toUtc().subtract(const Duration(minutes: 36)),
+      frames: const [],
+      hasCoverage: true,
+    );
+
+    expect(timeline.isStale, isTrue);
+  });
 }
 
 String _weatherJson({

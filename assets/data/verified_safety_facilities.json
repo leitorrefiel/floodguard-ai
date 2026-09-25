@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "dataset_scope": "Baliwag, Bulacan verified reference facilities",
+  "verified_on": "2026-09-26",
+  "facilities": [
+    {
+      "id": "baliwag-cdrrmo",
+      "name": "Baliwag City Disaster Risk Reduction and Management Office",
+      "address": "Matatag Building, Baliwag City Government Complex, DRT Highway, Pagala, Baliwag, Bulacan",
+      "latitude": 14.9575455,
+      "longitude": 120.8889330,
+      "category": "emergency_office",
+      "authority_source_name": "City Government of Baliwag - CDRRMO",
+      "authority_source_url": "https://baliwag.gov.ph/government/cdrrmc",
+      "coordinate_source_name": "OpenStreetMap contributors",
+      "coordinate_source_url": "https://www.openstreetmap.org/node/11261759986",
+      "verification_date": "2026-09-26",
+      "verification_status": "verified_reference",
+      "operational_status": "Opening and emergency-service status must be confirmed with the LGU"
+    },
+    {
+      "id": "baliwag-fire-station",
+      "name": "Baliwag Fire Station",
+      "address": "P. de Guzman Street, Pagala, Baliwag, Bulacan 3006",
+      "latitude": 14.9580757,
+      "longitude": 120.8900680,
+      "category": "fire_station",
+      "authority_source_name": "City Government of Baliwag - City Directories",
+      "authority_source_url": "https://baliwag.gov.ph/government/city-directories",
+      "coordinate_source_name": "OpenStreetMap contributors",
+      "coordinate_source_url": "https://www.openstreetmap.org/way/1420095818",
+      "verification_date": "2026-09-26",
+      "verification_status": "verified_reference",
+      "operational_status": "Current response availability must be confirmed by calling the official hotline"
+    },
+    {
+      "id": "baliuag-district-hospital",
+      "name": "Baliuag District Hospital",
+      "address": "Carpa Village, Sabang, Baliwag, Bulacan 3006",
+      "latitude": 14.9695905,
+      "longitude": 120.9134293,
+      "category": "hospital",
+      "authority_source_name": "Provincial Government of Bulacan - Baliuag District Hospital",
+      "authority_source_url": "https://bulacan.gov.ph/health/public-health-office/baliuag-district-hospital/",
+      "coordinate_source_name": "OpenStreetMap contributors",
+      "coordinate_source_url": "https://www.openstreetmap.org/way/831329544",
+      "verification_date": "2026-09-26",
+      "verification_status": "verified_reference",
+      "operational_status": "Current emergency capacity and opening status must be confirmed with the hospital"
+    }
+  ]
+}
