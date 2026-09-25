@@ -292,14 +292,19 @@ class HazardReportService {
   }
 
   Future<void> deleteReport(String id) async {
-    final apiDeleted = await _tryApiDelete(id);
-    if (!apiDeleted && _strictRemote) {
+    final reports = await _getLocalReports();
+    final report = reports.where((item) => item.id == id).firstOrNull;
+    final apiDelete = await _tryApiDelete(id);
+    if (!apiDelete.success && _strictRemote) {
       throw const SupabaseRemoteRequiredException('delete');
     }
-    _storageLabel = apiDeleted
+    final photoPath = apiDelete.photoPath ?? report?.photoPath;
+    if (apiDelete.success && photoPath?.isNotEmpty == true) {
+      await _removeRemotePhoto(photoPath!);
+    }
+    _storageLabel = apiDelete.success
         ? 'Supabase API'
         : 'Local device only (not synced)';
-    final reports = await _getLocalReports();
     await _saveLocalReports(
       reports.where((report) => report.id != id).toList(),
     );
@@ -383,23 +388,26 @@ class HazardReportService {
     }
   }
 
-  Future<bool> _tryApiDelete(String id) async {
+  Future<_DeleteResult> _tryApiDelete(String id) async {
     try {
       final data = await _client
           .from(_tableName)
           .delete()
           .eq('id', id)
-          .select('id')
+          .select('id, photo_path')
           .maybeSingle();
       if (data == null) {
         throw StateError('Delete affected no rows. Check ownership and RLS.');
       }
       _supabaseLog('delete success id=$id');
-      return true;
+      return _DeleteResult(
+        success: true,
+        photoPath: data['photo_path'] as String?,
+      );
     } catch (error, stackTrace) {
       _log('Supabase delete failed for $id: $error');
       debugPrintStack(stackTrace: stackTrace);
-      return false;
+      return const _DeleteResult(success: false);
     }
   }
 
@@ -734,6 +742,19 @@ class HazardReportService {
     }
   }
 
+  Future<void> _removeRemotePhoto(String path) async {
+    try {
+      await _client.storage.from(_photoBucket).remove([path]);
+      _supabaseLog('photo delete success path=$path');
+    } on StorageException catch (error, stackTrace) {
+      _log('photo delete failed: ${error.message}');
+      debugPrintStack(stackTrace: stackTrace);
+    } catch (error, stackTrace) {
+      _log('photo delete failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
   String _safeExtension(String path) {
     final extension = path.split('.').last.toLowerCase();
     if (extension == path || extension.length > 5) return 'jpg';
@@ -803,6 +824,13 @@ class _PhotoUpload {
 
   final String path;
   final String? signedUrl;
+}
+
+class _DeleteResult {
+  const _DeleteResult({required this.success, this.photoPath});
+
+  final bool success;
+  final String? photoPath;
 }
 
 class SupabaseRemoteRequiredException implements Exception {

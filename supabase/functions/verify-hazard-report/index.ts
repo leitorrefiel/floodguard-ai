@@ -27,8 +27,19 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!supabaseUrl || !serviceRoleKey) {
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!supabaseUrl || !serviceRoleKey || !anonKey) {
       return json({ error: "Supabase service configuration is missing." }, 500);
+    }
+
+    const authorization = req.headers.get("Authorization") ?? "";
+    const authClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authorization } },
+    });
+    const { data: authData, error: authError } = await authClient.auth
+      .getUser();
+    if (authError || !authData.user) {
+      return json({ error: "Authentication is required." }, 401);
     }
 
     const { report_id } = await req.json();
@@ -45,6 +56,12 @@ Deno.serve(async (req) => {
     if (reportError || !report) {
       console.error("[Verification] report read failed:", reportError);
       return json({ error: "Report could not be read." }, 404);
+    }
+    if (String(report.user_id ?? "") !== authData.user.id) {
+      return json(
+        { error: "Only the report owner can request verification." },
+        403,
+      );
     }
 
     const result = await evaluateReport(report, supabase);
@@ -92,10 +109,34 @@ async function evaluateReport(
   let score = 0;
   const signals: string[] = [];
   const evidence: Record<string, unknown> = {};
-  const latitude = Number(report.latitude);
-  const longitude = Number(report.longitude);
+  const rawLatitude = report.latitude;
+  const rawLongitude = report.longitude;
 
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  if (
+    rawLatitude === null || rawLatitude === undefined ||
+    rawLongitude === null || rawLongitude === undefined
+  ) {
+    return {
+      status: "pending",
+      confidence_score: 0,
+      verification_state: "completed",
+      verification_reason:
+        "Pending. Insufficient evidence because valid map coordinates are missing.",
+      verification_evidence: {
+        location: { valid: false, reason: "Latitude/longitude are missing." },
+      },
+      last_verified_at: new Date().toISOString(),
+    };
+  }
+
+  const latitude = Number(rawLatitude);
+  const longitude = Number(rawLongitude);
+
+  if (
+    !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+    latitude < -90 || latitude > 90 ||
+    longitude < -180 || longitude > 180
+  ) {
     return {
       status: "rejected",
       confidence_score: 0,
@@ -170,17 +211,24 @@ async function evaluateReport(
 
   const nearby = await getNearbyReports(report, supabase);
   evidence.nearby_reports = {
-    count: nearby,
+    count: nearby.independentCount,
+    same_user_duplicate: nearby.sameUserDuplicate,
     radius_meters: 250,
     window_hours: 3,
   };
-  const nearbyScore = nearby * 20;
+  const nearbyScore = nearby.independentCount * 20;
   score += nearbyScore;
   console.log(`[Verification] nearby report score: +${nearbyScore}`);
-  if (nearby > 0) {
+  if (nearby.independentCount > 0) {
     signals.push(
-      `${nearby} independent nearby matching report${nearby === 1 ? "" : "s"}`,
+      `${nearby.independentCount} independent nearby matching report${
+        nearby.independentCount === 1 ? "" : "s"
+      }`,
     );
+  }
+  if (nearby.sameUserDuplicate) {
+    score -= 30;
+    signals.push("Possible same-user duplicate within 250 meters and 3 hours");
   }
 
   const confirmations = Math.max(
@@ -196,19 +244,23 @@ async function evaluateReport(
   };
   if (confirmations > 0) {
     signals.push(
-      `${confirmations} independent community confirmation${confirmations === 1 ? "" : "s"}`,
+      `${confirmations} independent community confirmation${
+        confirmations === 1 ? "" : "s"
+      }`,
     );
   }
 
   score = Math.max(0, Math.min(100, score));
-  const independentlySupported =
-    nearby > 0 ||
+  const independentlySupported = nearby.independentCount > 0 ||
     confirmations >= 2 ||
     (image.matches_reported_hazard &&
       image.confidence >= 0.75 &&
       weather.score > 0);
-  const status =
-    score >= 70 && independentlySupported ? "high_confidence" : "pending";
+  const status = nearby.sameUserDuplicate && score < 35
+    ? "suspicious"
+    : score >= 70 && independentlySupported
+    ? "high_confidence"
+    : "pending";
   console.log(`[Verification] final confidence: ${score}`);
   console.log(`[Verification] status: ${status}`);
 
@@ -216,7 +268,9 @@ async function evaluateReport(
     status,
     confidence_score: score,
     verification_state: "completed",
-    verification_reason: `${labelStatus(status)}. Supporting evidence: ${signals.join(", ")}.`,
+    verification_reason: `${labelStatus(status)}. Supporting evidence: ${
+      signals.join(", ")
+    }.`,
     verification_evidence: evidence,
     last_verified_at: new Date().toISOString(),
   };
@@ -407,15 +461,14 @@ async function getOfficialFloodSusceptibility(
         },
       };
     }
-    const label =
-      (
-        {
-          VHF: "Very high flood susceptibility",
-          HF: "High flood susceptibility",
-          MF: "Moderate flood susceptibility",
-          LF: "Low flood susceptibility",
-        } as Record<string, string>
-      )[code] ?? `Flood susceptibility: ${code}`;
+    const label = (
+      {
+        VHF: "Very high flood susceptibility",
+        HF: "High flood susceptibility",
+        MF: "Moderate flood susceptibility",
+        LF: "Low flood susceptibility",
+      } as Record<string, string>
+    )[code] ?? `Flood susceptibility: ${code}`;
     const supportsFlood = code === "VHF" || code === "HF";
     return {
       supportsFlood,
@@ -459,21 +512,27 @@ async function getNearbyReports(
     .gte("created_at", since);
   if (error || !data) {
     console.error("[Verification] nearby report read failed:", error);
-    return 0;
+    return { independentCount: 0, sameUserDuplicate: false };
   }
 
-  return data.filter((other: Record<string, unknown>) => {
-    if (String(other.id) === String(report.id)) return false;
-    if (String(other.user_id ?? "") === String(report.user_id ?? ""))
-      return false;
+  let independentCount = 0;
+  let sameUserDuplicate = false;
+  for (const other of data as Record<string, unknown>[]) {
+    if (String(other.id) === String(report.id)) continue;
     const distance = distanceMeters(
       Number(report.latitude),
       Number(report.longitude),
       Number(other.latitude),
       Number(other.longitude),
     );
-    return distance <= 250;
-  }).length;
+    if (distance > 250) continue;
+    if (String(other.user_id ?? "") === String(report.user_id ?? "")) {
+      sameUserDuplicate = true;
+    } else {
+      independentCount += 1;
+    }
+  }
+  return { independentCount, sameUserDuplicate };
 }
 
 function distanceMeters(
@@ -485,8 +544,7 @@ function distanceMeters(
   const earth = 6371000;
   const dLat = radians(lat2 - lat1);
   const dLon = radians(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
+  const a = Math.sin(dLat / 2) ** 2 +
     Math.cos(radians(lat1)) * Math.cos(radians(lat2)) * Math.sin(dLon / 2) ** 2;
   return earth * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
@@ -496,7 +554,9 @@ function radians(value: number) {
 }
 
 function labelStatus(status: string) {
-  return status === "high_confidence" ? "High Confidence" : "Pending";
+  if (status === "high_confidence") return "High Confidence";
+  if (status === "suspicious") return "Suspicious";
+  return "Pending";
 }
 
 function json(body: Record<string, unknown>, status = 200): Response {

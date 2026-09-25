@@ -96,6 +96,17 @@ Future<void> main() async {
     }
     stdout.writeln('[Supabase] storage success bucket=hazard-report-photos');
 
+    await client.storage
+        .from('hazard-report-photos')
+        .updateBinary(
+          hazardPhotoPath,
+          jpeg,
+          fileOptions: const FileOptions(contentType: 'image/jpeg'),
+        );
+    stdout.writeln(
+      '[Supabase] storage replacement success bucket=hazard-report-photos',
+    );
+
     profilePhotoPath = '${user.id}/backend-validation.jpg';
     await client.storage
         .from('profile-pictures')
@@ -112,6 +123,17 @@ Future<void> main() async {
     }
     stdout.writeln('[Supabase] storage success bucket=profile-pictures');
 
+    await client.storage
+        .from('profile-pictures')
+        .updateBinary(
+          profilePhotoPath,
+          jpeg,
+          fileOptions: const FileOptions(contentType: 'image/jpeg'),
+        );
+    stdout.writeln(
+      '[Supabase] storage replacement success bucket=profile-pictures',
+    );
+
     final photoFunction = await client.functions.invoke(
       'verify-hazard-photo',
       body: {'photo_url': hazardSignedUrl, 'reported_category': 'other'},
@@ -123,6 +145,23 @@ Future<void> main() async {
       body: {'report_id': reportId},
     );
     _requireFunctionSuccess('verify-hazard-report', reportFunction);
+    final verification = await client
+        .from('hazard_reports')
+        .select('status, confidence_score, verification_reason')
+        .eq('id', reportId)
+        .single();
+    if (verification['status'] != 'pending' ||
+        verification['confidence_score'] != 0 ||
+        !verification['verification_reason'].toString().contains(
+          'Insufficient evidence',
+        )) {
+      throw StateError(
+        'Missing coordinates were not retained as insufficient evidence.',
+      );
+    }
+    stdout.writeln(
+      '[Supabase] verification scenario success name=insufficient-evidence',
+    );
 
     final confirmation = await client
         .from('report_confirmations')
