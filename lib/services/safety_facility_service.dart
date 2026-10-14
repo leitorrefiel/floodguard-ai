@@ -9,6 +9,12 @@ class SafetyFacilityService {
 
   static const assetPath = 'assets/data/verified_safety_facilities.json';
 
+  static List<EmergencyFacility> evacuationCenters(
+    Iterable<EmergencyFacility> facilities,
+  ) => facilities
+      .where((facility) => facility.type == EmergencyFacilityType.evacuation)
+      .toList(growable: false);
+
   final AssetBundle _bundle;
 
   Future<List<EmergencyFacility>> loadVerified() async {

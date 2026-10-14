@@ -13,6 +13,7 @@ import '../models/map_hazard.dart';
 import '../services/device_location_service.dart';
 import '../services/hazard_map_service.dart';
 import '../services/official_hazard_service.dart';
+import '../services/safety_facility_service.dart';
 import '../services/weather_layer_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/app_bottom_nav.dart';
@@ -417,7 +418,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       }
     }
     if (_showFacilities) {
-      for (final facility in _facilities) {
+      for (final facility in _displayedFacilities) {
         consider(_latLng(facility.coordinate), _facilityProperties(facility));
       }
     }
@@ -1502,7 +1503,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
   }
 
   Map<String, dynamic> _facilitiesGeoJson() {
-    final facilities = _facilities;
+    final facilities = _displayedFacilities;
     return _featureCollection(
       facilities.map((facility) {
         final point = _latLng(facility.coordinate);
@@ -1518,7 +1519,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
     for (final item in _hazardReports) {
       if ('hazard-${item.report.id}' == id) return _hazardProperties(item);
     }
-    for (final facility in _facilities) {
+    for (final facility in _displayedFacilities) {
       if (facility.id == id) return _facilityProperties(facility);
     }
     return null;
@@ -1548,7 +1549,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       }
     }
     if (_showFacilities) {
-      for (final facility in _facilities) {
+      for (final facility in _displayedFacilities) {
         features.add(
           _pointFeature(_latLng(facility.coordinate), {
             ..._facilityProperties(facility),
@@ -1695,8 +1696,12 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
 
   List<EmergencyFacility> get _facilities => [...?_mapData?.facilities];
 
+  List<EmergencyFacility> get _displayedFacilities => _isFacilityMode
+      ? SafetyFacilityService.evacuationCenters(_facilities)
+      : _facilities;
+
   List<EmergencyFacility> get _nearbyFacilities {
-    final facilities = [..._facilities];
+    final facilities = [..._displayedFacilities];
     facilities.sort((a, b) {
       final aDistance = _distanceMeters(
         _assessmentPoint,

@@ -38,7 +38,7 @@ Better available GPS fix: `14.981923, 120.883057` (28.3 m reported accuracy)
 | REPORT-REAL-01 | Genuine community flood report | Real photo/time/GPS; remains pending or community-qualified; map/history synchronize | NOT TESTED: no genuine incident was available and no incident was fabricated |
 | ADVISORY-01 | Current Baliwag-specific official advisory | Show publisher, issue time, geographic scope, and original link | NOT TESTED: no documented machine-readable Baliwag live-advisory feed was available during this check |
 | OFFLINE-PHYSICAL-01 | Physical device API outage | Existing map remains usable; cached weather is clearly stale; no false Low Risk | PENDING physical-device network isolation test |
-| MAP-PHYSICAL-01 | Updated facility/radar layers on phone | Three verified references render at fixed coordinates; pan/zoom and details remain correct | PENDING: device is at the sign-in screen and no credentials were stored in the repository or automation environment |
+| MAP-PHYSICAL-01 | Updated facility/radar layers on phone | Three verified references render at fixed coordinates; pan/zoom and details remain correct | PASS on 2026-10-14; see final physical-device follow-up below |
 
 ## Rain Event Procedure
 
@@ -91,6 +91,76 @@ Validation after the map isolation fix: `flutter analyze` clean; `flutter test` 
 | DEV-20261014-09 | Direct rain observation | Independent human observation must be recorded | No observer confirmation was supplied; 0.0 mm model output was not treated as proof of dry ground | NOT TESTED | Await field observer |
 | DEV-20261014-10 | Genuine community report synchronization | Genuine report appears in history/map and updates remotely | NOT TESTED during this cycle; no incident was fabricated | NOT TESTED | Requires genuine event and working remote backend |
 
-The configured FloodGuard hostname returned NXDOMAIN on both the laptop and phone. The only project available through the connected Supabase account was an unrelated `elikha` school/artwork backend: it did not contain FloodGuard tables, Storage buckets, or verification functions. That candidate was rejected, its ignored local configuration was removed, and no data in the unrelated project was changed. A valid FloodGuard Project URL and publishable key are required before remote report synchronization can be retested.
+The earlier NXDOMAIN condition was resolved before the final follow-up below. The restored FloodGuard project resolved through DNS, returned HTTP 200 from the authenticated health endpoint, and was used by the strict-remote physical build. The unrelated `elikha` project was never adopted and no data in it was changed.
 
 PAGASA's 4:25 PM thunderstorm advisory covered parts of Bulacan but did not name Baliwag; a broader thunderstorm watch included Bulacan. Neither was converted into a confirmed Baliwag flood incident. The Baliwag LGU weather page supplied regional weather and dam context, not a local rain-gauge observation at the device point.
+
+## Final Physical Device Validation - 2026-10-14
+
+Device: Infinix X6877 over wireless ADB and scrcpy
+
+Location shown by FloodGuard: `14.98134, 120.88317`
+
+Backend mode: `SUPABASE_STRICT_REMOTE=true`
+
+Backend source shown by the app: `Supabase API`
+
+### Passed Checks
+
+| Test ID | Scenario | Actual result | Result | Evidence |
+|---|---|---|---|---|
+| FINAL-GPS-01 | Current GPS marker | Blue accuracy marker rendered at the device coordinate near Rose Street; map taps did not redefine it | PASS | `2026-10-14-map-supabase-live.png` |
+| FINAL-MAP-02 | Pan, zoom and Locate | The GPS marker moved with map geography during pan, left the viewport after zoom, and returned to the same mapped location with Locate | PASS | `2026-10-14-live-gps-reset.png`, `2026-10-14-live-gps-pan-clean.png`, `2026-10-14-live-gps-zoom-clean.png`, `2026-10-14-live-gps-locate-return.png` |
+| FINAL-RADAR-03 | RainViewer historical radar | Dynamic radar loaded with provider frame `10:10 PM PHT`, play control, timeline, opacity, Light/Moderate/Heavy legend, historical wording and RainViewer attribution | PASS | `2026-10-14-live-rainviewer-radar.png` |
+| FINAL-MGB-04 | Static susceptibility separation | Layer control says `MGB Static`; details say `Moderate flood susceptibility (static susceptibility, not a current flood)` while current incidents remain zero | PASS | `2026-10-14-live-radar-mgb-static.png`, `2026-10-14-live-mgb-static-label.png` |
+| FINAL-FAC-05 | Three verified-reference facilities | Fire Station, CDRRMO and District Hospital retain distinct categories, addresses, sources, verification date and unconfirmed operating status | PASS | `2026-10-14-live-three-facilities.png`, `2026-10-14-live-cdrrmo-detail.png`, earlier fire-station detail evidence |
+| FINAL-EVAC-06 | No authoritative evacuation centers | Evacuation Centers mode now shows zero facility markers and the explicit empty state because no official named geocoded list is loaded | PASS after bug fix | `2026-10-14-live-zero-evacuation-centers.png` |
+| FINAL-DEMO-07 | No demo content | No demo flood, hazard or facility marker appeared in Home, Hazard Map or Evacuation Centers mode | PASS | Physical screen inspection and production asset loader tests |
+| FINAL-SYNC-08 | Supabase report synchronization | Strict-remote app read two remote reports. Both were `suspicious` but expired on 2026-09-02 and 2026-09-05, so the active map correctly showed zero reports instead of stale incidents | PASS | `[Supabase] connected`, `[Supabase] read success count=2`, `[Hazard Map] ... visible=0` |
+| FINAL-LINK-09 | Source links | RainViewer attribution opened secure `rainviewer.com`; Open-Meteo source opened secure `open-meteo.com` on the phone | PASS | Android Chrome package/focus and URL-bar UI dumps |
+| FINAL-UI-10 | Controls, details and marker selection | Layer controls, radar playback, opacity, facility selection, map details sheet and source metadata rendered and responded on the phone | PASS | Layer, details and CDRRMO screenshots above |
+
+### Issue Found And Fixed
+
+The initial Evacuation Centers physical test incorrectly listed the fire station, CDRRMO and hospital as evacuation centers. The mode now filters strictly for `EmergencyFacilityType.evacuation`; the production dataset contains zero such records. The three records remain available in the general safety-facilities layer. A regression test was added for this filter.
+
+### Screenshots Captured
+
+- `docs/field-evidence/2026-10-14-map-supabase-live.png`
+- `docs/field-evidence/2026-10-14-live-layer-controls.png`
+- `docs/field-evidence/2026-10-14-live-rainviewer-radar.png`
+- `docs/field-evidence/2026-10-14-live-radar-mgb-static.png`
+- `docs/field-evidence/2026-10-14-live-mgb-static-label.png`
+- `docs/field-evidence/2026-10-14-live-three-facilities.png`
+- `docs/field-evidence/2026-10-14-live-cdrrmo-detail.png`
+- `docs/field-evidence/2026-10-14-live-gps-reset.png`
+- `docs/field-evidence/2026-10-14-live-gps-pan-clean.png`
+- `docs/field-evidence/2026-10-14-live-gps-zoom-clean.png`
+- `docs/field-evidence/2026-10-14-live-gps-locate-return.png`
+- `docs/field-evidence/2026-10-14-live-zero-evacuation-centers.png`
+
+### Data Sources Used
+
+- Open-Meteo forecast/model API for modelled weather and precipitation.
+- RainViewer Weather Maps API for dynamic historical composite radar frames.
+- DENR-MGB/GeoRisk ArcGIS service for static flood susceptibility.
+- FloodGuard Supabase `hazard_reports` for community-report synchronization.
+- City Government of Baliwag CDRRMO and city directory pages for facility identity/category.
+- Bulacan Provincial Government for Baliuag District Hospital identity.
+- OpenStreetMap contributors for facility coordinates and base-map context.
+
+### Failed Or Not Tested
+
+- No check remains failed after the evacuation-center filter fix and physical retest.
+- Real rainy-condition validation remains **NOT TESTED** because no direct human observation of falling rain was recorded during this run.
+- A genuine active community incident lifecycle remains **NOT TESTED** because the only remote reports were expired and no incident was fabricated.
+- No current Baliwag-specific official flood advisory was available for an incident-level test.
+- Physical offline/network-loss behavior was not repeated in this final online run; automated stale/offline tests remain the available evidence.
+
+### Known Limitations
+
+- Open-Meteo values are model estimates, not Baliwag rain-gauge observations.
+- RainViewer frames are historical composite reflectivity and do not prove surface rainfall or flooding.
+- MGB susceptibility is static context and is never treated as a current incident.
+- Facility identity and coordinates are verified references, but current opening, emergency availability and evacuation designation remain unconfirmed.
+- There is still no authoritative named and geocoded Baliwag evacuation-center list in the app.

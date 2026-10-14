@@ -72,7 +72,31 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('evacuation-center layer excludes other safety facilities', () {
+    final facilities = [
+      _facility(EmergencyFacilityType.fireStation),
+      _facility(EmergencyFacilityType.emergencyOffice),
+      _facility(EmergencyFacilityType.hospital),
+    ];
+
+    expect(SafetyFacilityService.evacuationCenters(facilities), isEmpty);
+  });
 }
+
+EmergencyFacility _facility(EmergencyFacilityType type) => EmergencyFacility(
+  id: type.name,
+  name: type.name,
+  address: 'Baliwag, Bulacan',
+  coordinate: const MapCoordinate(latitude: 14.95, longitude: 120.89),
+  type: type,
+  sourceName: 'Authority',
+  sourceUrl: 'https://example.test/source',
+  coordinateSourceName: 'Coordinate source',
+  coordinateSourceUrl: 'https://example.test/coordinates',
+  verifiedAt: DateTime.utc(2026, 9, 26),
+  operationalStatus: 'Opening status unconfirmed',
+);
 
 Map<String, dynamic> _record({
   String id = 'verified',
