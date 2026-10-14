@@ -16,10 +16,18 @@ class HazardMapService {
   final SafetyFacilityService _facilityService;
 
   Future<HazardMapData> load() async {
-    final reports = await _reportService.getReports(
-      includeCommunityReports: true,
-    );
     final facilities = await _facilityService.loadVerified();
+    var reports = <HazardReport>[];
+    String? reportDataError;
+    try {
+      reports = await _reportService.getReports(includeCommunityReports: true);
+    } catch (error) {
+      reportDataError =
+          'Community reports are unavailable. Verified facilities and independent map layers remain available.';
+      debugPrint(
+        '[Hazard Map] community report load failed; no local reports shown: $error',
+      );
+    }
     final mappedReports = <MappedHazardReport>[];
 
     final visibleReports = reports.where(_isVisibleOnMap).toList();
@@ -51,7 +59,11 @@ class HazardMapService {
       facilities: facilities,
       reports: mappedReports,
       unmappedReportCount: visibleReports.length - mappedReports.length,
-      storageLabel: _reportService.storageLabel,
+      storageLabel: reportDataError == null
+          ? _reportService.storageLabel
+          : 'Remote community reports unavailable',
+      communityReportsAvailable: reportDataError == null,
+      reportDataError: reportDataError,
     );
   }
 

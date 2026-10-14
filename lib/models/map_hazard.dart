@@ -58,10 +58,14 @@ class HazardMapData {
     required this.reports,
     required this.unmappedReportCount,
     required this.storageLabel,
+    required this.communityReportsAvailable,
+    this.reportDataError,
   });
 
   final List<EmergencyFacility> facilities;
   final List<MappedHazardReport> reports;
   final int unmappedReportCount;
   final String storageLabel;
+  final bool communityReportsAvailable;
+  final String? reportDataError;
 }

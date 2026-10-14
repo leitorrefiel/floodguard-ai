@@ -67,3 +67,30 @@ The production dataset is `assets/data/verified_safety_facilities.json`. Use `do
 - No named, coordinate-bearing, currently active evacuation-center list was found in the reviewed Baliwag LGU pages.
 - OpenStreetMap supplies facility coordinates under ODbL; government pages supply facility identity/category. Coordinate survey accuracy has not been independently measured onsite.
 - A genuine rainy-event comparison and physical offline cycle still require field conditions and an observer.
+
+## Physical Device Follow-up - 2026-10-14
+
+Device: Infinix X6877 over wireless ADB
+
+Test area: Baliwag, Bulacan
+
+App mode: `SUPABASE_STRICT_REMOTE=true`
+
+Validation after the map isolation fix: `flutter analyze` clean; `flutter test` 22/22 passed.
+
+| Test ID | Scenario | Expected | Actual | Result | Screenshot / log |
+|---|---|---|---|---|---|
+| DEV-20261014-01 | Home weather labels | Current rainfall is explicitly modelled and timestamped | Open-Meteo valid time 19:30 PHT; 0.0 mm shown as `Modelled`; daily forecast 7.6 mm kept separate | PASS | `docs/field-evidence/2026-10-14-home.png` |
+| DEV-20261014-02 | GPS and Locate | Map uses device position; map taps do not redefine GPS | Fused fix `14.981341,120.883174` (100 m); available GPS fix `14.981258,120.883067` (20.2 m); Locate recentered the blue marker | PASS | `docs/field-evidence/2026-10-14-map-relocated.png`; `adb dumpsys location` |
+| DEV-20261014-03 | Radar history | Dynamic frame timestamp, coverage, legend, opacity and playback work | Baliwag coverage rendered; latest loaded frame 19:40 PHT; playback changed selection to 19:10 PHT; legend and opacity control visible | PASS | `docs/field-evidence/2026-10-14-radar.png` |
+| DEV-20261014-04 | MGB layer separation | Static susceptibility is visually separate from incidents | `MGB Static` toggled independently; provider query at GPS point returned `MF`; incident count remained zero | PASS | `docs/field-evidence/2026-10-14-radar-mgb-facilities.png` |
+| DEV-20261014-05 | Verified facility details | Marker shows category, authority, date, coordinate source and cautious status | Baliwag Fire Station marker showed `VERIFIED`, official city-directory source, OSM coordinate source, verification date, and unconfirmed response availability | PASS | `docs/field-evidence/2026-10-14-fire-station-detail.png` |
+| DEV-20261014-06 | Map pan and zoom | Geographic sources remain MapLibre-attached; controls do not alter GPS | Pan changed the rendered viewport; mouse-wheel zoom changed scale; Locate returned to the device coordinate | PASS | `docs/field-evidence/2026-10-14-map-after-pan.png`, `2026-10-14-map-after-zoom.png`, `2026-10-14-map-relocated.png` |
+| DEV-20261014-07 | Community backend unavailable | No cached community reports in strict mode; independent layers remain usable | Invalid configured project hostname returned NXDOMAIN. App showed zero reports with a visible warning while retaining three verified facilities, radar and MGB | PASS after isolation fix | `docs/field-evidence/2026-10-14-map-offline-reports-3-facilities.png` |
+| DEV-20261014-08 | Current provider comparison | Use one coordinate and PHT; never call model/radar a gauge | At 19:45 PHT Open-Meteo returned 0.0 mm model precipitation; RainViewer returned 12 historical frames generated at 19:50 PHT; MGB returned `MF` | PASS | `dart run tool/field_provider_check.dart 14.981341 120.883174` |
+| DEV-20261014-09 | Direct rain observation | Independent human observation must be recorded | No observer confirmation was supplied; 0.0 mm model output was not treated as proof of dry ground | NOT TESTED | Await field observer |
+| DEV-20261014-10 | Genuine community report synchronization | Genuine report appears in history/map and updates remotely | NOT TESTED during this cycle; no incident was fabricated | NOT TESTED | Requires genuine event and working remote backend |
+
+The configured FloodGuard hostname returned NXDOMAIN on both the laptop and phone. The only project available through the connected Supabase account was an unrelated `elikha` school/artwork backend: it did not contain FloodGuard tables, Storage buckets, or verification functions. That candidate was rejected, its ignored local configuration was removed, and no data in the unrelated project was changed. A valid FloodGuard Project URL and publishable key are required before remote report synchronization can be retested.
+
+PAGASA's 4:25 PM thunderstorm advisory covered parts of Bulacan but did not name Baliwag; a broader thunderstorm watch included Bulacan. Neither was converted into a confirmed Baliwag flood incident. The Baliwag LGU weather page supplied regional weather and dam context, not a local rain-gauge observation at the device point.

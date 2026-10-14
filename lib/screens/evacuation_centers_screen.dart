@@ -144,6 +144,7 @@ class _EvacuationCentersScreenState extends State<EvacuationCentersScreen> {
       if (!mounted) return;
       setState(() {
         _mapData = data;
+        _mapDataError = data.reportDataError;
         _isLoadingMapData = false;
       });
       try {

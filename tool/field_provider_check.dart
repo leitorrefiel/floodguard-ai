@@ -20,11 +20,27 @@ Future<void> main(List<String> arguments) async {
   try {
     stdout.writeln('[Field] requested location: $latitude,$longitude');
     stdout.writeln('[Field] comparison timezone: Asia/Manila (UTC+08:00)');
-    await _checkOpenMeteo(client, latitude, longitude);
-    await _checkRainViewer(client);
-    await _checkMgb(client, latitude, longitude);
+    final results = await Future.wait([
+      _runCheck(
+        'Open-Meteo',
+        () => _checkOpenMeteo(client, latitude, longitude),
+      ),
+      _runCheck('RainViewer', () => _checkRainViewer(client)),
+      _runCheck('DENR-MGB', () => _checkMgb(client, latitude, longitude)),
+    ]);
+    if (results.any((passed) => !passed)) exitCode = 1;
   } finally {
     client.close();
+  }
+}
+
+Future<bool> _runCheck(String source, Future<void> Function() check) async {
+  try {
+    await check();
+    return true;
+  } catch (error) {
+    stderr.writeln('[$source] unavailable: $error');
+    return false;
   }
 }
 
@@ -79,16 +95,24 @@ Future<void> _checkRainViewer(http.Client client) async {
   final generated = DateTime.fromMillisecondsSinceEpoch(
     (data['generated'] as num).toInt() * 1000,
     isUtc: true,
-  ).add(const Duration(hours: 8));
+  );
   final frameTime = DateTime.fromMillisecondsSinceEpoch(
     (latest['time'] as num).toInt() * 1000,
     isUtc: true,
-  ).add(const Duration(hours: 8));
+  );
   stdout.writeln(
-    '[RainViewer] historical_frames=${past.length} generated=$generated PHT '
-    'latest_frame=$frameTime PHT path=${latest['path']} '
+    '[RainViewer] historical_frames=${past.length} '
+    'generated=${_formatPht(generated)} '
+    'latest_frame=${_formatPht(frameTime)} path=${latest['path']} '
     '(FRAME GENERATION TIME, NOT A GAUGE OBSERVATION)',
   );
+}
+
+String _formatPht(DateTime value) {
+  final pht = value.toUtc().add(const Duration(hours: 8));
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${pht.year}-${two(pht.month)}-${two(pht.day)} '
+      '${two(pht.hour)}:${two(pht.minute)}:${two(pht.second)} PHT';
 }
 
 Future<void> _checkMgb(
