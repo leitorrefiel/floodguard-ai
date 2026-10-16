@@ -164,3 +164,94 @@ The initial Evacuation Centers physical test incorrectly listed the fire station
 - MGB susceptibility is static context and is never treated as a current incident.
 - Facility identity and coordinates are verified references, but current opening, emergency availability and evacuation designation remain unconfirmed.
 - There is still no authoritative named and geocoded Baliwag evacuation-center list in the app.
+
+## Final QA Follow-up - 2026-10-16
+
+Device: Infinix X6877 over wireless ADB and scrcpy
+
+Location shown by FloodGuard: `14.98134, 120.88317`
+
+Backend mode: `SUPABASE_STRICT_REMOTE=true`
+
+### Offline Physical Test
+
+Android's per-package firewall denied all networking to `com.example.floodguard` while the physical phone, app, and mirror remained observable. The firewall state was restored to its original `allow` / chain-disabled state after the test.
+
+| Test ID | Scenario | Actual result | Result | Evidence |
+|---|---|---|---|---|
+| QA-OFFLINE-01 | Relaunch with app networking denied | App opened without a crash or freeze; loading completed after the bounded retry period | PASS | `docs/field-evidence/2026-10-16-qa-network-denied-home.png` |
+| QA-OFFLINE-02 | Weather and risk during outage | Cached Open-Meteo data was explicitly marked `cached/stale`; combined risk changed to `Insufficient current data` and warned against using it for a safety decision | PASS | `2026-10-16-qa-network-denied-home.png`; physical UI dump |
+| QA-OFFLINE-03 | Strict-remote reports during outage | Supabase failed with `SocketException: Failed host lookup`; Home showed `Remote community reports unavailable`; strict mode displayed no local report as a remote success | PASS | Device logcat and Home screenshot |
+| QA-OFFLINE-04 | Navigation and local-safe screens | Forecast remained usable and marked its model data `cached/stale`; cached profile and local Safety Tips/checklist remained navigable | PASS | `2026-10-16-qa-network-denied-forecast.png`, physical UI dump, `2026-10-16-qa-network-unavailable-safety-tips.png` |
+| QA-OFFLINE-05 | Restore connectivity | Package networking returned to `allow`; Supabase connected and read two existing rows; current Open-Meteo model time advanced to 20:15 PHT | PASS | `2026-10-16-qa-online-resynchronized.png`; `[Supabase] connected`; `[Supabase] read success count=2` |
+
+This test used Android's device-native per-package firewall rather than turning off the Wi-Fi radio, because wireless ADB and scrcpy depend on that radio. It exercised the installed app's real no-network paths for Open-Meteo and Supabase without losing physical observation.
+
+### Temporary Active Incident Lifecycle
+
+One authenticated test-only report was created through the normal Report Hazard UI and then completely removed. Its ID was `edeb544b-a314-4d23-9f02-037c45493f9d`; no pre-existing community row was modified or deleted.
+
+| Stage | Actual result | Result | Evidence |
+|---|---|---|---|
+| CREATE | Supabase created the temporary report at GPS `14.9813431,120.8831741`; photo uploaded under the authenticated user's path; initial status was `pending` | PASS | `[Supabase] create success`; `2026-10-16-qa-report-created.png` |
+| READ | Report History showed 3/3 rows and the map showed one community flood marker while still stating `No confirmed incidents` | PASS | `2026-10-16-qa-report-history.png`, `2026-10-16-qa-report-map-pending.png` |
+| UPDATE | Severity changed from Moderate to High and the description changed; direct Supabase read and map detail both reflected the update | PASS | `[Supabase] update success`; `2026-10-16-qa-report-map-updated.png` |
+| VERIFICATION | Status remained `pending`, confidence was 25/100, and reason stated that image verification was temporarily unavailable; it was never labelled official or confirmed | PASS | Direct Supabase read and `2026-10-16-qa-report-map-details.png` |
+| DELETE | UI deletion removed the row and its exact photo path; history returned to 2/2, direct REST read returned zero rows, and report confirmations returned zero rows | PASS | `[Supabase] delete success`; `[Supabase] photo delete success`; `2026-10-16-qa-report-deleted.png` |
+
+### Map Integrity Recheck
+
+- Refreshed strict-remote map after cleanup: two stored rows read, zero active/visible community incidents, zero flood markers, zero other-hazard markers, and three verified-reference facilities.
+- Evacuation Centers mode: zero markers and the explicit authoritative-list empty state.
+- No demo flood, hazard, facility, or fake evacuation-center data appeared.
+- RainViewer remains a historical radar layer; DENR-MGB remains static susceptibility; neither is counted as a current incident.
+
+Evidence: `docs/field-evidence/2026-10-16-qa-map-clean-after-delete.png` and `docs/field-evidence/2026-10-16-qa-zero-evacuation-centers.png`.
+
+### Actual Rain Validation: PENDING REAL RAIN
+
+Use this checklist only while rain is directly observed at the physical test location:
+
+- [ ] Record date and Philippine local time.
+- [ ] Record physical location, GPS coordinates, and accuracy.
+- [ ] Record direct human observation: `no rain`, `light`, `moderate`, or `heavy`.
+- [ ] Record Open-Meteo model precipitation and model-valid timestamp.
+- [ ] Record the selected RainViewer historical frame timestamp, coverage, and visible echo.
+- [ ] Record FloodGuard's displayed condition and freshness label.
+- [ ] Capture Home and radar screenshots with timestamps visible.
+- [ ] Note any official advisory separately with publisher, scope, issue time, and source link.
+- [ ] Compare timing and labels without treating Open-Meteo as a rain-gauge observation.
+
+Status: **PENDING REAL RAIN**. No falling-rain observation was recorded during this QA cycle.
+
+### 2026-10-16 Screenshots Captured
+
+- `docs/field-evidence/2026-10-16-qa-network-denied-home.png`
+- `docs/field-evidence/2026-10-16-qa-network-denied-forecast.png`
+- `docs/field-evidence/2026-10-16-qa-network-unavailable-safety-tips.png`
+- `docs/field-evidence/2026-10-16-qa-online-resynchronized.png`
+- `docs/field-evidence/2026-10-16-qa-report-created.png`
+- `docs/field-evidence/2026-10-16-qa-report-history.png`
+- `docs/field-evidence/2026-10-16-qa-report-map-pending.png`
+- `docs/field-evidence/2026-10-16-qa-report-map-details.png`
+- `docs/field-evidence/2026-10-16-qa-report-map-updated.png`
+- `docs/field-evidence/2026-10-16-qa-report-deleted.png`
+- `docs/field-evidence/2026-10-16-qa-map-clean-after-delete.png`
+- `docs/field-evidence/2026-10-16-qa-zero-evacuation-centers.png`
+
+### Final Known Limitations
+
+- Actual rainy-condition comparison remains pending direct human observation.
+- Open-Meteo is a weather-model source, not a Baliwag rain gauge.
+- RainViewer is historical composite radar and cannot confirm ground rainfall or flooding.
+- No authoritative named/geocoded Baliwag evacuation-center list is available in the app.
+- Facility opening, active emergency availability, and evacuation designation are not claimed.
+- Firebase Cloud Messaging remains unconfigured; local notifications are unaffected.
+- The standalone `tool/supabase_backend_check.dart` was invoked on 2026-10-16 but could not authenticate because this shell does not contain `SUPABASE_TEST_EMAIL` or `SUPABASE_TEST_PASSWORD`. The physical strict-remote app independently reconnected, authenticated its saved session, logged `[Supabase] connected`, and read the original two rows after network restoration.
+
+### Final Automated Validation
+
+- `flutter analyze`: PASS, no issues found (89.4 seconds).
+- `flutter test`: PASS, 23/23 tests.
+- Physical strict-remote reconnection: PASS, authenticated saved session and `[Supabase] read success count=2`.
+- Standalone backend validator: BLOCKED by missing process-only test-account credentials; no credential was printed or committed.
