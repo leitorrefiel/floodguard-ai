@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/app_theme.dart';
+import '../utils/input_validators.dart';
+
+typedef SignInAction = Future<void> Function(String email, String password);
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.signIn});
+
+  final SignInAction? signIn;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -43,10 +48,15 @@ class _LoginScreenState extends State<LoginScreen> {
           _showMessage('Account created. Check your email to confirm it.');
         }
       } else {
-        await auth.signInWithPassword(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-        );
+        final signIn = widget.signIn;
+        if (signIn != null) {
+          await signIn(_emailController.text.trim(), _passwordController.text);
+        } else {
+          await auth.signInWithPassword(
+            email: _emailController.text.trim(),
+            password: _passwordController.text,
+          );
+        }
       }
     } on AuthException catch (error) {
       _showMessage(error.message);
@@ -130,9 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       labelText: 'Email address',
                       prefixIcon: Icon(Icons.email_outlined),
                     ),
-                    validator: (value) => value != null && value.contains('@')
-                        ? null
-                        : 'Enter a valid email address.',
+                    validator: validateEmailAddress,
                   ),
                   const SizedBox(height: 16),
                   TextFormField(
@@ -157,9 +165,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                     ),
-                    validator: (value) => value != null && value.length >= 6
-                        ? null
-                        : 'Use at least 6 characters.',
+                    validator: validatePassword,
                   ),
                   if (!_isSignUp)
                     Align(
@@ -273,9 +279,7 @@ class _ForgotPasswordSheetState extends State<_ForgotPasswordSheet> {
                   labelText: 'Email address',
                   prefixIcon: Icon(Icons.email_outlined),
                 ),
-                validator: (value) => value != null && value.contains('@')
-                    ? null
-                    : 'Enter a valid email address.',
+                validator: validateEmailAddress,
               ),
               const SizedBox(height: 22),
               SizedBox(

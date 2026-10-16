@@ -90,6 +90,78 @@ void main() {
     );
   });
 
+  test('reports unavailable weather when no cache exists', () async {
+    final service = WeatherService(
+      client: MockClient((_) async => throw http.ClientException('offline')),
+      retryDelay: Duration.zero,
+    );
+
+    expect(
+      () => service.getForecast(latitude: 14.9561, longitude: 120.8981),
+      throwsA(isA<WeatherException>()),
+    );
+  });
+
+  test('times out without leaving the request pending', () async {
+    final service = WeatherService(
+      client: MockClient(
+        (_) => Future<http.Response>.delayed(
+          const Duration(milliseconds: 100),
+          () => http.Response(_weatherJson(rain: 0), 200),
+        ),
+      ),
+      requestTimeout: const Duration(milliseconds: 5),
+      retryDelay: Duration.zero,
+    );
+
+    expect(
+      () => service.getForecast(latitude: 14.9562, longitude: 120.8982),
+      throwsA(isA<WeatherException>()),
+    );
+  });
+
+  test('rejects malformed provider JSON', () async {
+    final service = WeatherService(
+      client: MockClient((_) async => http.Response('{not-json', 200)),
+      retryDelay: Duration.zero,
+    );
+
+    expect(
+      () => service.getForecast(latitude: 14.9563, longitude: 120.8983),
+      throwsA(isA<WeatherException>()),
+    );
+  });
+
+  test('returns fresh data after connectivity is restored', () async {
+    var offline = false;
+    var rain = 0.4;
+    final service = WeatherService(
+      client: MockClient((_) async {
+        if (offline) throw http.ClientException('offline');
+        return http.Response(_weatherJson(rain: rain), 200);
+      }),
+      retryDelay: Duration.zero,
+    );
+    await service.getForecast(latitude: 14.9564, longitude: 120.8984);
+    offline = true;
+    final stale = await service.getForecast(
+      latitude: 14.9564,
+      longitude: 120.8984,
+      forceRefresh: true,
+    );
+    offline = false;
+    rain = 1.8;
+    final restored = await service.getForecast(
+      latitude: 14.9564,
+      longitude: 120.8984,
+      forceRefresh: true,
+    );
+
+    expect(stale.isStale, isTrue);
+    expect(restored.isStale, isFalse);
+    expect(restored.current.precipitationMm, 1.8);
+  });
+
   test(
     'radar timeline reports unavailable coverage without inventing tiles',
     () async {

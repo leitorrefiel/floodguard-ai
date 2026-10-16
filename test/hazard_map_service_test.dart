@@ -27,6 +27,68 @@ void main() {
       );
     },
   );
+
+  test(
+    'omits expired reports and reports without usable coordinates',
+    () async {
+      final now = DateTime.now();
+      final service = HazardMapService(
+        reportService: _ReportService([
+          _report(
+            id: 'expired',
+            latitude: 14.95,
+            longitude: 120.89,
+            expiresAt: now.subtract(const Duration(minutes: 1)),
+          ),
+          _report(id: 'unmapped', latitude: null, longitude: null),
+          _report(id: 'active', latitude: 14.96, longitude: 120.90),
+        ]),
+        facilityService: _EmptyFacilityService(),
+      );
+
+      final data = await service.load();
+
+      expect(data.reports.map((item) => item.report.id), ['active']);
+      expect(data.unmappedReportCount, 1);
+    },
+  );
+}
+
+class _ReportService extends HazardReportService {
+  _ReportService(this.reports)
+    : super(client: SupabaseClient('https://example.supabase.co', 'test-key'));
+
+  final List<HazardReport> reports;
+
+  @override
+  Future<List<HazardReport>> getReports({
+    bool includeCommunityReports = false,
+  }) async => reports;
+}
+
+class _EmptyFacilityService extends SafetyFacilityService {
+  @override
+  Future<List<EmergencyFacility>> loadVerified() async => const [];
+}
+
+HazardReport _report({
+  required String id,
+  required double? latitude,
+  required double? longitude,
+  DateTime? expiresAt,
+}) {
+  final now = DateTime.now();
+  return HazardReport(
+    id: id,
+    type: HazardType.floodedRoad,
+    severity: 'Moderate',
+    location: 'Baliwag, Bulacan',
+    latitude: latitude,
+    longitude: longitude,
+    expiresAt: expiresAt ?? now.add(const Duration(hours: 1)),
+    createdAt: now,
+    updatedAt: now,
+  );
 }
 
 class _FailingReportService extends HazardReportService {

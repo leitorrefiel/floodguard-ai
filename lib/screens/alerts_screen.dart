@@ -12,6 +12,7 @@ import '../services/alert_service.dart';
 import '../services/device_location_service.dart';
 import '../services/hazard_map_service.dart';
 import '../services/notification_service.dart';
+import '../services/notification_preference_cache.dart';
 import '../services/risk_service.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
@@ -31,7 +32,6 @@ class _AlertsScreenState extends State<AlertsScreen> {
     'FLOODGUARD_DEVELOPER_MODE',
   );
   static const _readAlertsKey = 'floodguard_read_alert_ids';
-  static const _prefsPrefix = 'floodguard_alert_pref';
 
   final _alertService = AlertService();
   final _locationService = DeviceLocationService();
@@ -71,6 +71,10 @@ class _AlertsScreenState extends State<AlertsScreen> {
 
   Future<void> _restoreState() async {
     final preferences = await SharedPreferences.getInstance();
+    final localPreferences = NotificationPreferenceCache(
+      preferences: preferences,
+      userId: Supabase.instance.client.auth.currentUser?.id,
+    );
     final remotePreferences = await _loadRemotePreferences();
     if (!mounted) return;
     setState(() {
@@ -78,9 +82,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
         ..clear()
         ..addAll(preferences.getStringList(_readAlertsKey) ?? const []);
       for (final preference in _AlertPreference.values) {
-        final localValue = preferences.getBool(
-          '$_prefsPrefix.${preference.name}',
-        );
+        final localValue = localPreferences.read(preference.name);
         _preferences[preference] =
             remotePreferences?[preference] ??
             localValue ??
@@ -419,7 +421,11 @@ class _AlertsScreenState extends State<AlertsScreen> {
   Future<void> _setPreference(_AlertPreference preference, bool enabled) async {
     setState(() => _preferences[preference] = enabled);
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setBool('$_prefsPrefix.${preference.name}', enabled);
+    final localPreferences = NotificationPreferenceCache(
+      preferences: preferences,
+      userId: Supabase.instance.client.auth.currentUser?.id,
+    );
+    await localPreferences.write(preference.name, enabled);
     await _saveRemotePreferences();
     await _refreshAlerts(notifyNew: false);
   }

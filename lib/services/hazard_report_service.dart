@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/hazard_report.dart';
 import '../models/map_hazard.dart';
+import '../utils/input_validators.dart';
 import 'hazard_image_verification_service.dart';
 import 'official_hazard_service.dart';
 import 'report_verification_service.dart';
@@ -21,14 +22,15 @@ class HazardReportService {
   static const _confirmationTableName = 'report_confirmations';
   static const _photoBucket = 'hazard-report-photos';
   static const _signedPhotoUrlSeconds = 60 * 60;
-  static const _strictRemote = bool.fromEnvironment('SUPABASE_STRICT_REMOTE');
-
-  HazardReportService({SupabaseClient? client})
-    : _client = client ?? Supabase.instance.client {
+  HazardReportService({SupabaseClient? client, bool? strictRemote})
+    : _client = client ?? Supabase.instance.client,
+      _strictRemote =
+          strictRemote ?? const bool.fromEnvironment('SUPABASE_STRICT_REMOTE') {
     _imageVerificationService = HazardImageVerificationService(client: _client);
   }
 
   final SupabaseClient _client;
+  final bool _strictRemote;
   late final HazardImageVerificationService _imageVerificationService;
   final ReportVerificationService _verificationService =
       ReportVerificationService();
@@ -88,6 +90,12 @@ class HazardReportService {
     String? localPhotoPath,
     String? otherHazardType,
   }) async {
+    _validateReportInput(
+      location: location,
+      description: description,
+      latitude: latitude,
+      longitude: longitude,
+    );
     final now = DateTime.now();
     final userId = _client.auth.currentUser?.id;
     final existingReports = await _getLocalReports();
@@ -138,6 +146,12 @@ class HazardReportService {
   }
 
   Future<HazardReport> updateReport(HazardReport report) async {
+    _validateReportInput(
+      location: report.location,
+      description: report.description,
+      latitude: report.latitude,
+      longitude: report.longitude,
+    );
     final reports = await _getLocalReports();
     final pending = report.copyWith(
       status: HazardReportStatus.pending,
@@ -779,6 +793,21 @@ class HazardReportService {
       return 'Report submitted, but the selected image type is not allowed.';
     }
     return 'Report submitted, but photo upload failed. Check your connection and try again.';
+  }
+
+  void _validateReportInput({
+    required String location,
+    required String description,
+    required double? latitude,
+    required double? longitude,
+  }) {
+    final locationError = validateHazardLocation(location);
+    if (locationError != null) throw ArgumentError(locationError);
+    final descriptionError = validateHazardDescription(description);
+    if (descriptionError != null) throw ArgumentError(descriptionError);
+    if (!hasValidCoordinates(latitude, longitude)) {
+      throw ArgumentError('Hazard location coordinates are invalid.');
+    }
   }
 
   Future<void> _saveLocalReports(

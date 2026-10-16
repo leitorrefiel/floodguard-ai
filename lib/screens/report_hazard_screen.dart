@@ -8,6 +8,7 @@ import '../models/hazard_report.dart';
 import '../services/device_location_service.dart';
 import '../services/hazard_report_service.dart';
 import '../utils/app_theme.dart';
+import '../utils/input_validators.dart';
 import 'evacuation_centers_screen.dart';
 
 class ReportHazardScreen extends StatefulWidget {
@@ -94,7 +95,8 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
   Future<void> _saveReport({bool skipDuplicateCheck = false}) async {
     if (!_formKey.currentState!.validate()) return;
     final hazardPoint = _hazardReportLocation;
-    if (hazardPoint == null) {
+    if (hazardPoint == null ||
+        !hasValidCoordinates(hazardPoint.latitude, hazardPoint.longitude)) {
       _message('Hazard location is required.');
       return;
     }
@@ -439,13 +441,7 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
               hintText:
                   'Describe what you observed, road condition, approximate water depth, or anything that may help others.',
             ),
-            validator: (value) {
-              final text = value?.trim() ?? '';
-              if (text.isNotEmpty && text.length < 8) {
-                return 'Use at least 8 characters or leave it blank.';
-              }
-              return null;
-            },
+            validator: validateHazardDescription,
           ),
         ),
         Row(
@@ -710,15 +706,7 @@ class _ReportHazardScreenState extends State<ReportHazardScreen> {
             prefixIcon: Icon(Icons.location_on_outlined),
           ),
           textInputAction: TextInputAction.next,
-          validator: (value) {
-            if (value == null || value.trim().isEmpty) {
-              return 'Location is required.';
-            }
-            if (value.trim().length < 3) {
-              return 'Enter a more specific location.';
-            }
-            return null;
-          },
+          validator: validateHazardLocation,
         ),
         const SizedBox(height: 10),
         Row(

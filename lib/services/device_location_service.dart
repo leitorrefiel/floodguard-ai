@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -233,15 +235,20 @@ class DeviceLocationService {
       );
     }
 
-    final cachedPosition = await Geolocator.getLastKnownPosition();
-    final position =
-        cachedPosition ??
-        await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-            timeLimit: Duration(seconds: 15),
-          ),
-        );
+    late final Position position;
+    try {
+      final cachedPosition = await Geolocator.getLastKnownPosition();
+      position =
+          cachedPosition ??
+          await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit: Duration(seconds: 15),
+            ),
+          );
+    } on TimeoutException catch (error) {
+      throw locationExceptionForPositionError(error);
+    }
 
     var label =
         '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
@@ -396,4 +403,16 @@ class DeviceLocationService {
     return 'Selected location';
   }
 
+}
+
+@visibleForTesting
+LocationAccessException locationExceptionForPositionError(Object error) {
+  if (error is TimeoutException) {
+    return const LocationAccessException(
+      'GPS location timed out. Move to an open area and try again.',
+    );
+  }
+  return const LocationAccessException(
+    'Unable to get your location right now.',
+  );
 }

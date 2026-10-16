@@ -90,14 +90,21 @@ class WeatherForecastResponse {
 }
 
 class WeatherService {
-  WeatherService({http.Client? client}) : _client = client ?? http.Client();
+  WeatherService({
+    http.Client? client,
+    Duration requestTimeout = const Duration(seconds: 12),
+    Duration retryDelay = const Duration(milliseconds: 350),
+  }) : _client = client ?? http.Client(),
+       _requestTimeout = requestTimeout,
+       _retryDelay = retryDelay;
 
   static const _freshFor = Duration(minutes: 10);
   static const _staleFallbackLimit = Duration(hours: 6);
-  static const _requestTimeout = Duration(seconds: 12);
   static final Map<String, _WeatherCacheEntry> _memoryCache = {};
 
   final http.Client _client;
+  final Duration _requestTimeout;
+  final Duration _retryDelay;
 
   Future<WeatherSnapshot> getCurrentWeather({
     required double latitude,
@@ -219,7 +226,7 @@ class WeatherService {
         if (!error.message.contains('HTTP 5')) break;
       }
       if (attempt == 0) {
-        await Future<void>.delayed(const Duration(milliseconds: 350));
+        await Future<void>.delayed(_retryDelay);
       }
     }
     if (lastError is WeatherException) throw lastError;
