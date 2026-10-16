@@ -236,7 +236,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
               : _AlertLevel.watch,
           title: 'Heavy rainfall forecast',
           message:
-              'Forecast rainfall may reach ${risk.forecastRainLabel} in your selected area.',
+              '${risk.forecastRainLabel} is forecast for the wettest day in your selected area.',
           location: location.label,
           createdAt: DateTime.now(),
           source: 'Open-Meteo model forecast',

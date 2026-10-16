@@ -155,7 +155,7 @@ class _RiskDetailsScreenState extends State<RiskDetailsScreen> {
                 ),
                 Expanded(
                   child: _Info(
-                    label: 'Forecast rain',
+                    label: 'Rain outlook',
                     value: assessment.forecastRainLabel,
                     icon: Icons.water,
                     color: _riskColor(assessment.level),

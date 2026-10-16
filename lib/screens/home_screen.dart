@@ -188,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         children: [
                           MetricTile(
                             icon: Icons.cloudy_snowing,
-                            label: 'Rain estimate',
+                            label: 'Rain now',
                             value: risk?.currentRainLabel ?? '--',
                             caption: 'Modelled',
                           ),
@@ -200,9 +200,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           MetricTile(
                             icon: Icons.water,
-                            label: 'Forecast rain',
+                            label: 'Rain outlook',
                             value: risk?.forecastRainLabel ?? '--',
-                            caption: 'Max daily',
+                            caption: 'Wettest day',
                           ),
                         ],
                       ),

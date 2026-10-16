@@ -1,4 +1,5 @@
 import 'weather_service.dart';
+import '../utils/rainfall_labels.dart';
 
 class RiskAssessment {
   const RiskAssessment({
@@ -10,6 +11,8 @@ class RiskAssessment {
     required this.currentRainMm,
     required this.currentPrecipitationMm,
     required this.forecastRainMm,
+    required this.currentWeatherCode,
+    required this.forecastWeatherCode,
     required this.temperatureCelsius,
     required this.observedAt,
     required this.actions,
@@ -24,6 +27,8 @@ class RiskAssessment {
   final double currentRainMm;
   final double currentPrecipitationMm;
   final double forecastRainMm;
+  final int currentWeatherCode;
+  final int forecastWeatherCode;
   final double temperatureCelsius;
   final String observedAt;
   final List<RiskAction> actions;
@@ -32,10 +37,14 @@ class RiskAssessment {
   bool get hasCurrentData => dataFreshness == WeatherDataFreshness.fresh;
   String get displayLevel => level.replaceFirst('Risk', 'Weather Concern');
 
-  String get currentRainLabel => '${currentRainMm.toStringAsFixed(1)} mm';
-  String get precipitationLabel =>
-      '${currentPrecipitationMm.toStringAsFixed(1)} mm';
-  String get forecastRainLabel => '${forecastRainMm.toStringAsFixed(1)} mm';
+  String get currentRainLabel =>
+      rainfallLabel(currentPrecipitationMm, weatherCode: currentWeatherCode);
+  String get precipitationLabel => currentRainLabel;
+  String get forecastRainLabel => rainfallLabel(
+    forecastRainMm,
+    weatherCode: forecastWeatherCode,
+    window: RainfallWindow.daily,
+  );
   String get temperatureLabel => '${temperatureCelsius.toStringAsFixed(0)} C';
 }
 
@@ -71,6 +80,8 @@ class RiskService {
         currentRainMm: current.rainMm,
         currentPrecipitationMm: current.precipitationMm,
         forecastRainMm: forecast.days.first.precipitationMm,
+        currentWeatherCode: current.weatherCode,
+        forecastWeatherCode: forecast.days.first.weatherCode,
         temperatureCelsius: current.temperatureCelsius,
         observedAt: current.observedAt,
         actions: const [
@@ -84,9 +95,13 @@ class RiskService {
         dataFreshness: forecast.freshness,
       );
     }
-    final maxDailyRain = forecast.days
-        .map((day) => day.precipitationMm)
-        .fold<double>(0, (max, value) => value > max ? value : max);
+    final wettestDay = forecast.days.reduce(
+      (currentDay, nextDay) =>
+          nextDay.precipitationMm > currentDay.precipitationMm
+          ? nextDay
+          : currentDay,
+    );
+    final maxDailyRain = wettestDay.precipitationMm;
     final nextRainTotal = forecast.days
         .map((day) => day.precipitationMm)
         .fold<double>(0, (total, value) => total + value);
@@ -118,6 +133,8 @@ class RiskService {
       currentRainMm: current.rainMm,
       currentPrecipitationMm: current.precipitationMm,
       forecastRainMm: maxDailyRain,
+      currentWeatherCode: current.weatherCode,
+      forecastWeatherCode: wettestDay.weatherCode,
       temperatureCelsius: current.temperatureCelsius,
       observedAt: current.observedAt,
       actions: _actionsFor(

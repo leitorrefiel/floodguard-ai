@@ -11,12 +11,14 @@ class WeatherSnapshot {
     required this.temperatureCelsius,
     required this.precipitationMm,
     required this.rainMm,
+    required this.weatherCode,
     required this.observedAt,
   });
 
   final double temperatureCelsius;
   final double precipitationMm;
   final double rainMm;
+  final int weatherCode;
 
   /// Model valid-time from Open-Meteo. This is not a rain-gauge observation.
   final String observedAt;
@@ -265,6 +267,7 @@ class WeatherService {
         temperatureCelsius: _requiredDouble(current, 'temperature_2m'),
         precipitationMm: _requiredDouble(current, 'precipitation'),
         rainMm: _requiredDouble(current, 'rain'),
+        weatherCode: _requiredInt(current, 'weather_code'),
         observedAt: currentTime,
       ),
       days: days,
@@ -399,6 +402,14 @@ class WeatherService {
 
   double _requiredDouble(Map<String, dynamic> data, String key) {
     final value = _asDouble(data[key]);
+    if (value == null) {
+      throw WeatherException('Weather response is missing $key.');
+    }
+    return value;
+  }
+
+  int _requiredInt(Map<String, dynamic> data, String key) {
+    final value = _asInt(data[key]);
     if (value == null) {
       throw WeatherException('Weather response is missing $key.');
     }

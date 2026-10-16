@@ -7,6 +7,7 @@ import '../services/device_location_service.dart';
 import '../services/hazard_report_service.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
+import '../utils/rainfall_labels.dart';
 import '../widgets/app_bottom_nav.dart';
 import '../widgets/data_source_link.dart';
 
@@ -183,9 +184,7 @@ class _CurrentWeatherCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final current = forecast.current;
-    final conditionCode = forecast.days.isEmpty
-        ? 0
-        : forecast.days.first.weatherCode;
+    final conditionCode = current.weatherCode;
     return Card(
       color: AppTheme.paleBlue,
       child: Padding(
@@ -234,8 +233,11 @@ class _CurrentWeatherCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _MetricBlock(
-                    label: 'Rain estimate',
-                    value: '${current.precipitationMm.toStringAsFixed(1)} mm',
+                    label: 'Rain now',
+                    value: rainfallLabel(
+                      current.precipitationMm,
+                      weatherCode: current.weatherCode,
+                    ),
                   ),
                 ),
                 Expanded(
@@ -330,10 +332,13 @@ class _RainOutlookCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _MetricBlock(
-                    label: 'Peak rainfall',
+                    label: 'Peak rain intensity',
                     value: peak == null
-                        ? 'No hourly rain expected'
-                        : '${peak.precipitationMm.toStringAsFixed(1)} mm/hr',
+                        ? 'No rain'
+                        : rainfallLabel(
+                            peak.precipitationMm,
+                            weatherCode: peak.weatherCode,
+                          ),
                   ),
                 ),
                 Expanded(
@@ -348,9 +353,12 @@ class _RainOutlookCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _MetricBlock(
-              label: 'Daily total',
-              value:
-                  '${wettestDay.precipitationMm.toStringAsFixed(1)} mm on ${_dateLabel(wettestDay.date)}',
+              label: 'Rain outlook',
+              value: dailyRainOutlook(
+                wettestDay.precipitationMm,
+                dayLabel: _dateLabel(wettestDay.date),
+                weatherCode: wettestDay.weatherCode,
+              ),
             ),
             const SizedBox(height: 12),
             Text(
@@ -446,7 +454,10 @@ class _HourCard extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
             Text(
-              '${hour.precipitationMm.toStringAsFixed(1)} mm',
+              rainfallLabel(
+                hour.precipitationMm,
+                weatherCode: hour.weatherCode,
+              ),
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ],
@@ -519,7 +530,11 @@ class _ForecastCard extends StatelessWidget {
                 Text(_weatherLabel(day.weatherCode)),
                 const SizedBox(height: 4),
                 Text(
-                  '${day.precipitationMm.toStringAsFixed(1)} mm expected rainfall',
+                  dailyRainOutlook(
+                    day.precipitationMm,
+                    dayLabel: _dateLabel(day.date),
+                    weatherCode: day.weatherCode,
+                  ),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
@@ -527,7 +542,13 @@ class _ForecastCard extends StatelessWidget {
                   spacing: 10,
                   runSpacing: 4,
                   children: [
-                    _ConcernBadge(label: _rainfallConcern(day.precipitationMm)),
+                    _ConcernBadge(
+                      label: rainfallLabel(
+                        day.precipitationMm,
+                        weatherCode: day.weatherCode,
+                        window: RainfallWindow.daily,
+                      ),
+                    ),
                     if (day.precipitationProbabilityMax != null)
                       Text('Rain chance ${day.precipitationProbabilityMax}%'),
                   ],
@@ -657,12 +678,6 @@ String _monitoringPriority(double precipitation) {
   return 'Low flood monitoring priority';
 }
 
-String _rainfallConcern(double precipitation) {
-  if (precipitation >= 20) return 'Heavy rainfall expected';
-  if (precipitation >= 5) return 'Moderate rainfall concern';
-  return 'Low rainfall concern';
-}
-
 Color _concernColor(double precipitation) {
   if (precipitation >= 20) return Colors.red;
   if (precipitation >= 5) return const Color(0xFFF59E0B);
@@ -701,6 +716,11 @@ String _rainTrendText(List<WeatherForecastHour> hours) {
       secondHalf.reduce((value, element) => value + element) /
       secondHalf.length;
   final peak = _peakHour(hours);
+  if (peak != null &&
+      rainfallLabel(peak.precipitationMm, weatherCode: peak.weatherCode) ==
+          'No rain') {
+    return 'No rain is expected in the next several hours.';
+  }
   if (peak != null && peak.precipitationMm >= 10) {
     return 'Heavy rainfall may peak around ${_timeLabel(peak.time)}.';
   }
@@ -721,6 +741,11 @@ String _insightText(WeatherForecastResponse forecast, int? nearbyFloodReports) {
         element.precipitationMm > value.precipitationMm ? element : value,
   );
   final reportCount = nearbyFloodReports ?? 0;
+  final wettestDayLabel = rainfallLabel(
+    wettestDay.precipitationMm,
+    weatherCode: wettestDay.weatherCode,
+    window: RainfallWindow.daily,
+  );
   if (peakRain >= 10 || wettestDay.precipitationMm >= 20) {
     if (reportCount > 0) {
       return 'Heavy rainfall is expected and $reportCount flood ${reportCount == 1 ? 'report is' : 'reports are'} active nearby. Avoid affected roads and monitor alerts.';
@@ -735,6 +760,9 @@ String _insightText(WeatherForecastResponse forecast, int? nearbyFloodReports) {
   }
   if (reportCount > 0) {
     return '$reportCount flood ${reportCount == 1 ? 'report is' : 'reports are'} active nearby. Rainfall is expected to remain light, but continue checking local updates.';
+  }
+  if (peakRain <= 0 && wettestDayLabel == 'No rain') {
+    return 'No rain is currently expected. Continue monitoring local reports because conditions can change.';
   }
   return 'Rainfall is expected to remain light. Continue monitoring local reports.';
 }

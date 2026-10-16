@@ -62,6 +62,7 @@ void main() {
               temperatureCelsius: 26,
               precipitationMm: 2,
               rainMm: 1,
+              weatherCode: 61,
               observedAt: DateTime.now().toIso8601String(),
             ),
             days: [
