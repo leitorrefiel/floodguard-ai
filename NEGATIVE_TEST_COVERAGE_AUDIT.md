@@ -57,6 +57,21 @@ Status meanings:
 ## Final Results
 
 - `flutter analyze`: no issues found.
-- `flutter test`: 48 tests passed.
+- `flutter test`: 49 tests passed.
 - No Firebase/FCM configuration was changed.
 - Real-data sources, Supabase schema/RLS, map layers, rainfall labels, and risk calculations were not changed.
+
+## Physical Regression Validation
+
+Physical device: Infinix X6877  
+Validation date: 2026-10-17  
+Build mode: strict remote Supabase
+
+| Check | Result | Physical observation / evidence |
+|---|---|---|
+| Incomplete login email | PASS | `person@` was rejected before authentication with `Enter a valid email address.` Evidence: `final_login_invalid2.png`. |
+| Missing report coordinates | PASS | With no saved location and Location permission denied, Report Hazard stopped submission with `Hazard location is required.` No report was created. Evidence: `final_coordinate_rejected.png`. |
+| GPS permission failure | PASS | Denying Location permission ended loading, kept the map responsive, and showed `Location permission is blocked. Enable it in App Settings.` Permissions were restored afterward. Evidence: `final_location_denied.png`. |
+| Per-user notification preferences | PASS | Account A persisted Flood warnings OFF / Nearby hazard reports ON after restart. Account B loaded its independent ON / ON state. Returning to Account A restored OFF / ON. Evidence: `final_alerts_a_restart.png`, `final_alerts_b2.png`, and `final_alerts_a_return.png`. |
+
+One additional navigation regression was found during account switching: after a successful logout, the removed authentication root left the previous Home screen visible until app restart. Home navigation now preserves the authentication root route, and logout immediately displays the sign-in screen. The fix is covered by `app_bottom_nav_test.dart` and was physically retested in `logout_fix_result.png`.

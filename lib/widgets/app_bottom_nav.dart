@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../screens/alerts_screen.dart';
 import '../screens/forecast_screen.dart';
-import '../screens/home_screen.dart';
 import '../screens/profile_screen.dart';
 import '../utils/app_theme.dart';
 
@@ -14,10 +13,7 @@ class AppBottomNav extends StatelessWidget {
   void _onTap(BuildContext context, int value) {
     if (value == index) return;
     if (value == 0) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(builder: (_) => const HomeScreen()),
-        (route) => false,
-      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } else if (value == 1) {
       Navigator.of(
         context,
